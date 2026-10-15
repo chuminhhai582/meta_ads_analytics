@@ -114,7 +114,33 @@
         <button id="emptyActionBtn" class="btn btn-primary">Cài đặt Token</button>
       </section>
 
-      <div id="reportContent" class="report-content">
+        <!-- ============ 5 TABS NAVIGATION ============ -->
+        <nav class="product-tabs-bar" id="productTabsBar" aria-label="Chọn tab phân tích sản phẩm">
+          <button class="tab-btn active" data-tab="all" id="tabBtnAll">
+            <i data-lucide="layout-grid"></i>
+            <span>Tổng quan (Toàn BM)</span>
+          </button>
+          <button class="tab-btn" data-tab="ucmas" id="tabBtnUcmas">
+            <i data-lucide="book-open"></i>
+            <span>UCMAS</span>
+            <span class="tab-badge" id="tabBadgeUcmas">--</span>
+          </button>
+          <button class="tab-btn" data-tab="uckid" id="tabBtnUckid">
+            <i data-lucide="sparkles"></i>
+            <span>UCKID</span>
+            <span class="tab-badge" id="tabBadgeUckid">--</span>
+          </button>
+          <button class="tab-btn" data-tab="mathca" id="tabBtnMathca">
+            <i data-lucide="calculator"></i>
+            <span>MATHCA</span>
+            <span class="tab-badge" id="tabBadgeMathca">--</span>
+          </button>
+          <button class="tab-btn" data-tab="traihe" id="tabBtnTraihe">
+            <i data-lucide="sun"></i>
+            <span>TRẠI HÈ</span>
+            <span class="tab-badge" id="tabBadgeTraihe">--</span>
+          </button>
+        </nav>
 
         <!-- ============ AI HERO ============ -->
         <section class="ai-hero-card" id="aiHeroSection">
@@ -131,7 +157,7 @@
             </div>
             <div class="hero-text-block">
               <div class="hero-header-row">
-                <h2 class="hero-title">Chẩn Đoán Tự Động</h2>
+                <h2 class="hero-title" id="heroTabTitle">Chẩn Đoán Tự Động</h2>
                 <span id="aiStatusPill" class="health-pill">Đang phân tích...</span>
               </div>
               <p id="aiExecutiveSummary" class="hero-desc">Đang quét CPA, CTR, tần suất của các chiến dịch...</p>
@@ -164,42 +190,23 @@
           </div>
         </section>
 
-        <!-- ============ KPI CARDS ============ -->
+        <!-- ============ KPI CARDS (META + LEAD FUNNEL) ============ -->
         <section class="kpi-grid" aria-label="Chỉ số chính">
+          <!-- 1. Ngân sách ngày & Đã chi hôm nay -->
           <div class="kpi-card kpi-highlight">
             <div class="kpi-header">
               <span class="kpi-title">Ngân sách dự kiến hôm nay</span>
               <div class="kpi-icon tone-success"><i data-lucide="calendar-check"></i></div>
             </div>
             <div class="kpi-value text-success" id="kpiBudget">–</div>
-            <div class="kpi-footer">
-              <span class="kpi-sub" id="kpiBudgetSub">CBO + ABO đang chạy</span>
-            </div>
-          </div>
-
-          <div class="kpi-card">
-            <div class="kpi-header">
-              <span class="kpi-title">Đã chi hôm nay</span>
-              <div class="kpi-icon tone-primary"><i data-lucide="gauge"></i></div>
-            </div>
-            <div class="kpi-value" id="kpiTodaySpend">–</div>
             <div class="progress-track" aria-hidden="true"><div class="progress-bar" id="kpiPacingBar"></div></div>
             <div class="kpi-footer">
-              <span class="kpi-sub" id="kpiPacingText">Tiến độ giải ngân</span>
+              <span class="kpi-sub" id="kpiTodaySpend">Đã chi: –</span>
+              <span class="kpi-sub" id="kpiPacingText">–</span>
             </div>
           </div>
 
-          <div class="kpi-card">
-            <div class="kpi-header">
-              <span class="kpi-title">Tin nhắn hôm nay</span>
-              <div class="kpi-icon tone-pink"><i data-lucide="message-circle"></i></div>
-            </div>
-            <div class="kpi-value" id="kpiTodayMessages">–</div>
-            <div class="kpi-footer">
-              <span class="kpi-sub" id="kpiTodayCpa">Giá/tin hôm nay: –</span>
-            </div>
-          </div>
-
+          <!-- 2. Chi tiêu kỳ -->
           <div class="kpi-card">
             <div class="kpi-header">
               <span class="kpi-title">Tổng chi tiêu <span class="period-label"></span></span>
@@ -208,9 +215,11 @@
             <div class="kpi-value" id="kpiSpend">–</div>
             <div class="kpi-footer">
               <span class="kpi-sub" id="kpiCpm">CPM: –</span>
+              <span class="kpi-sub" id="kpiCtr">CTR: –</span>
             </div>
           </div>
 
+          <!-- 3. Tin nhắn & CPA -->
           <div class="kpi-card">
             <div class="kpi-header">
               <span class="kpi-title">Tin nhắn <span class="period-label"></span></span>
@@ -223,30 +232,58 @@
             </div>
           </div>
 
+          <!-- 4. Số điện thoại (L1) & Giá/SĐT (CPL) -->
           <div class="kpi-card">
             <div class="kpi-header">
-              <span class="kpi-title">Tỷ lệ click (CTR)</span>
-              <div class="kpi-icon tone-warning"><i data-lucide="mouse-pointer-click"></i></div>
+              <span class="kpi-title">Số điện thoại (L1)</span>
+              <div class="kpi-icon tone-primary"><i data-lucide="phone-call"></i></div>
             </div>
-            <div class="kpi-value" id="kpiCtr">–</div>
+            <div class="kpi-value" id="kpiLeads">–</div>
             <div class="kpi-footer">
-              <span class="kpi-sub" id="kpiCpc">CPC: –</span>
-              <span class="kpi-sub" id="kpiClicks"></span>
+              <span class="kpi-sub" id="kpiCpl">Giá/SĐT: –</span>
+              <span class="kpi-sub" id="kpiConvMsgToL1">% Ra số: –</span>
+            </div>
+          </div>
+
+          <!-- 5. Học viên chốt (L4) & Giá/Học viên (CAC) -->
+          <div class="kpi-card">
+            <div class="kpi-header">
+              <span class="kpi-title">Học viên chốt (L4)</span>
+              <div class="kpi-icon tone-success"><i data-lucide="graduation-cap"></i></div>
+            </div>
+            <div class="kpi-value text-success" id="kpiL4">–</div>
+            <div class="kpi-footer">
+              <span class="kpi-sub" id="kpiCac">Chi phí/HV (CAC): –</span>
+              <span class="kpi-sub" id="kpiConvTotal">% Chốt: –</span>
+            </div>
+          </div>
+
+          <!-- 6. Doanh thu học phí & ROAS -->
+          <div class="kpi-card">
+            <div class="kpi-header">
+              <span class="kpi-title">Doanh thu học phí</span>
+              <div class="kpi-icon tone-warning"><i data-lucide="badge-dollar-sign"></i></div>
+            </div>
+            <div class="kpi-value text-warning" id="kpiRevenue">–</div>
+            <div class="kpi-footer">
+              <span class="kpi-sub" id="kpiRoas">ROAS thực: –</span>
+              <span class="kpi-sub" id="kpiL3Count">Hẹn test (L3): –</span>
             </div>
           </div>
         </section>
 
-        <!-- ============ 4 PRODUCTS ============ -->
-        <section class="products-section">
+        <!-- ============ 4 PRODUCTS (HIỂN THỊ Ở TAB TỔNG QUAN) ============ -->
+        <section class="products-section" id="productsSection">
           <div class="section-header">
             <div class="section-title-wrap">
               <i data-lucide="layers" class="section-title-icon"></i>
               <h3 class="section-title">Hiệu quả 4 sản phẩm</h3>
             </div>
-            <p class="section-desc">Phân loại theo tên chiến dịch giữa dấu <code>/</code> thứ 1 và thứ 2 (VD: <code>ten/ucmas/...</code>). Bấm vào thẻ để lọc nhanh.</p>
+            <p class="section-desc">Phân loại theo tên chiến dịch giữa dấu <code>/</code> thứ 1 và thứ 2 (VD: <code>ten/ucmas/...</code>). Bấm vào thẻ để chuyển tab nhanh.</p>
           </div>
           <div class="products-grid" id="productsGrid"></div>
         </section>
+
 
         <!-- ============ CHARTS ROW 1 ============ -->
         <section class="charts-row">
@@ -292,6 +329,18 @@
             </div>
             <div class="chart-canvas-container"><canvas id="placementDoughnutChart"></canvas></div>
           </div>
+        </section>
+
+        <!-- ============ ENROLLED STUDENTS (L4) ============ -->
+        <section class="enrolled-section d-none" id="enrolledSection">
+          <div class="section-header">
+            <div class="section-title-wrap">
+              <i data-lucide="graduation-cap" class="section-title-icon"></i>
+              <h3 class="section-title" id="enrolledTitle">Học viên chốt thành công gần nhất (L4)</h3>
+            </div>
+            <span class="count-badge" id="enrolledCountBadge">0 học viên</span>
+          </div>
+          <div class="enrolled-grid" id="enrolledGrid"></div>
         </section>
 
         <!-- ============ RECOMMENDATIONS ============ -->
@@ -355,7 +404,7 @@
     </main>
 
     <footer class="app-footer">
-      <div id="footerInfo">Meta Graph API • BM Ucmas Việt Nam</div>
+      <div id="footerInfo">Meta Graph API • BM Ucmas Việt Nam • Google Sheets CRM</div>
       <div class="footer-links">
         <a id="tokenGuideLink" href="/docs/huong-dan-token" target="_blank" rel="noopener">Hướng dẫn lấy Token</a>
         <span>•</span>
@@ -364,25 +413,31 @@
     </footer>
   </div>
 
-  <!-- ============ TOKEN MODAL ============ -->
+  <!-- ============ TOKEN & SHEET MODAL ============ -->
   <div id="configModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="configModalTitle">
     <div class="modal-box">
       <div class="modal-header">
         <div class="modal-title-group">
           <div class="modal-icon"><i data-lucide="sliders"></i></div>
-          <h3 class="modal-title" id="configModalTitle">Kết nối Meta Marketing API</h3>
+          <h3 class="modal-title" id="configModalTitle">Cài Đặt Kết Nối (Meta & Google Sheet)</h3>
         </div>
         <button id="closeConfigModalBtn" class="btn-close" aria-label="Đóng">&times;</button>
       </div>
 
       <div class="modal-body">
-        <p class="modal-intro">Token được lưu vào file <code>.env</code> trên máy này (chỉ cập nhật đúng dòng token, không ảnh hưởng cấu hình khác).</p>
+        <p class="modal-intro">Cấu hình được lưu vào file <code>.env</code> an toàn trên máy local.</p>
 
         <form id="configForm">
           <div class="form-group">
             <label for="cfgToken">Meta Access Token <span class="required">*</span></label>
-            <textarea id="cfgToken" class="form-control" rows="3" placeholder="EAA..." required></textarea>
+            <textarea id="cfgToken" class="form-control" rows="2" placeholder="EAA..." required></textarea>
             <small class="form-help">Quyền tối thiểu: <code>ads_read</code>, <code>read_insights</code>, <code>business_management</code></small>
+          </div>
+
+          <div class="form-group">
+            <label for="cfgSheetUrl">Đường link Google Sheet (Xuất bản dạng CSV) <span class="optional">(tùy chọn)</span></label>
+            <input type="url" id="cfgSheetUrl" class="form-control" placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv">
+            <small class="form-help">Link xuất bản web chứa SĐT, mốc L1 - L4 và doanh thu học phí.</small>
           </div>
 
           <div class="form-row">
@@ -408,6 +463,7 @@
       </div>
     </div>
   </div>
+
 
   <!-- Toast notifications -->
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>

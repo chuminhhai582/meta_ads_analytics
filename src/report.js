@@ -1,13 +1,15 @@
 /**
  * Build the dashboard "view" from a raw report (src/meta-api.js → fetchRawReport).
  *
- * Local Data Lake Engine:
+ * Local Data Lake Engine v3:
  *  - Calculates aggregations for ANY date preset ('today', 'yesterday', 'last_7d', 'last_14d', 'last_30d', 'this_month')
  *  - Calculates aggregations for ANY account ('ALL' or specific account ID)
- *  - Calculates aggregations for ANY product ('ALL' or 'ucmas', 'uckid', 'mathca', 'traihe')
+ *  - Calculates aggregations for ANY product ('ALL', 'ucmas', 'uckid', 'mathca', 'traihe')
+ *  - Integrates Lead & CRM Funnel from Google Sheet (L1 ➔ L2 ➔ L3 ➔ L4, Revenue, CAC, CPL)
  *  - 100% Local / In-memory: executes in < 5ms without calling Meta API.
  */
 import { TARGET_PRODUCTS, TARGET_KEYS } from './meta-api.js';
+import { summarizeLeads } from './google-sheet.js';
 
 export const PLATFORM_LABELS = {
   facebook: 'Facebook',
@@ -25,13 +27,12 @@ const ratio = (a, b, digits = 2) => (b > 0 ? parseFloat(((a / b) * 100).toFixed(
  * Get YYYY-MM-DD in Vietnam timezone (Asia/Ho_Chi_Minh - GMT+7).
  */
 export function getVietnamDateString(d = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
+  return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Ho_Chi_Minh',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit'
   }).format(d);
-  return parts; // e.g. "2026-10-15"
 }
 
 /**
@@ -40,7 +41,6 @@ export function getVietnamDateString(d = new Date()) {
 export function getDateRange(preset = 'last_30d', refDate = new Date()) {
   const todayStr = getVietnamDateString(refDate);
 
-  // Parse YYYY, MM, DD in UTC space for safe day arithmetic
   const [y, m, d] = todayStr.split('-').map(Number);
   const base = new Date(Date.UTC(y, m - 1, d));
 
@@ -113,13 +113,22 @@ function aggregate(campaigns) {
 }
 
 /**
- * Build view with multi-dimensional local slicing:
- * @param {object} raw Raw report (v2) from latest_insights.json
- * @param {object|string} options { product = 'ALL', accountId = 'ALL', datePreset = 'last_30d' } or product string
+ * Mask phone number for dashboard display (e.g. 0968***189)
+ */
+function maskPhone(phone) {
+  if (!phone || phone.length < 8) return phone || '';
+  return phone.slice(0, 4) + '***' + phone.slice(-3);
+}
+
+/**
+ * Build view with multi-dimensional local slicing & lead funnel data:
+ * @param {object} raw Raw report from latest_insights.json
+ * @param {object|string} options { product = 'ALL', accountId = 'ALL', datePreset = 'last_30d', activeTab = 'all' }
  */
 export function buildView(raw, options = {}) {
   const opts = typeof options === 'string' ? { product: options } : (options || {});
-  const product = opts.product || 'ALL';
+  const activeTab = opts.activeTab || (opts.product && opts.product !== 'ALL' ? opts.product : 'all');
+  const product = opts.product || (activeTab !== 'all' ? activeTab : 'ALL');
   const accountId = opts.accountId || 'ALL';
   const datePreset = opts.datePreset || raw.datePreset || 'last_30d';
 
@@ -130,17 +139,16 @@ export function buildView(raw, options = {}) {
 
   const dailyRecords = raw.dailyRecords || [];
   const placementRecords = raw.placementRecords || [];
+  const rawLeads = raw.leadsRecords || [];
 
-  // 1. Group daily stats by campaign for the chosen date range & account
+  // 1. Group daily stats by campaign for chosen date range & account
   const campAggMap = new Map();
   const campTodayMap = new Map();
   const dailyDateMap = new Map();
 
   for (const d of dailyRecords) {
-    // Filter account
     if (selectedAccount !== 'ALL' && d.accountId !== selectedAccount) continue;
 
-    // Track today's spend & messages regardless of datePreset (so today's KPI is always accurate)
     if (d.date === todayStr) {
       const curToday = campTodayMap.get(d.campaignId) || { spend: 0, messages: 0 };
       curToday.spend += d.spend || 0;
@@ -148,7 +156,6 @@ export function buildView(raw, options = {}) {
       campTodayMap.set(d.campaignId, curToday);
     }
 
-    // Filter date range for the active period
     if (d.date >= startDate && d.date <= endDate) {
       const cur = campAggMap.get(d.campaignId) || { spend: 0, messages: 0, impressions: 0, clicks: 0 };
       cur.spend += d.spend || 0;
@@ -157,7 +164,6 @@ export function buildView(raw, options = {}) {
       cur.clicks += d.clicks || 0;
       campAggMap.set(d.campaignId, cur);
 
-      // Daily trend aggregation for charts (if matching product)
       const matchProd = selectedProduct === 'ALL' ? TARGET_KEYS.includes(d.product) : d.product === selectedProduct;
       if (matchProd) {
         const trendItem = dailyDateMap.get(d.date) || { date: d.date, spend: 0, impressions: 0, clicks: 0, messages: 0 };
@@ -174,7 +180,6 @@ export function buildView(raw, options = {}) {
   const allFilteredCampaigns = (raw.campaigns || [])
     .filter(c => selectedAccount === 'ALL' || c.accountId === selectedAccount)
     .map(c => {
-      // If daily records are present, aggregate dynamically; otherwise fallback to stored snapshot values
       const agg = dailyRecords.length > 0 ? (campAggMap.get(c.id) || { spend: 0, messages: 0, impressions: 0, clicks: 0 }) : c;
       const t = dailyRecords.length > 0 ? (campTodayMap.get(c.id) || { spend: 0, messages: 0 }) : { spend: c.todaySpend || 0, messages: c.todayMessages || 0 };
 
@@ -201,25 +206,60 @@ export function buildView(raw, options = {}) {
   // 3. Filter campaigns for the 4 target products
   const targetCampaigns = allFilteredCampaigns.filter(c => TARGET_KEYS.includes(c.product));
 
-  // Compute the 4 product summary cards
-  const products = TARGET_PRODUCTS.map(p => ({
-    ...p,
-    ...aggregate(targetCampaigns.filter(c => c.product === p.key))
-  }));
+  // Compute the 4 product summary cards with lead & funnel metrics
+  const products = TARGET_PRODUCTS.map(p => {
+    const pCamps = targetCampaigns.filter(c => c.product === p.key);
+    const pStats = aggregate(pCamps);
+    const pLeads = summarizeLeads(rawLeads, { product: p.key });
 
-  // Campaigns to display in table / AI analysis
+    const cpl = pLeads.l1Count > 0 ? round(pStats.spend / pLeads.l1Count) : 0;
+    const cpaL3 = pLeads.l3Count > 0 ? round(pStats.spend / pLeads.l3Count) : 0;
+    const cac = pLeads.l4Count > 0 ? round(pStats.spend / pLeads.l4Count) : 0;
+    const roas = pStats.spend > 0 ? parseFloat((pLeads.revenue / pStats.spend).toFixed(2)) : 0;
+    const convMsgToL1 = pStats.messages > 0 ? ratio(pLeads.l1Count, pStats.messages) : 0;
+
+    return {
+      ...p,
+      ...pStats,
+      leads: pLeads.totalLeads,
+      l1Count: pLeads.l1Count,
+      l2Count: pLeads.l2Count,
+      l3Count: pLeads.l3Count,
+      l4Count: pLeads.l4Count,
+      revenue: pLeads.revenue,
+      cpl,
+      cpaL3,
+      cac,
+      roas,
+      convMsgToL1,
+      convL1toL2: pLeads.convL1toL2,
+      convL2toL3: pLeads.convL2toL3,
+      convL3toL4: pLeads.convL3toL4,
+      convTotal: pLeads.convTotal
+    };
+  });
+
+  // Campaigns to display in table
   const viewCampaigns = targetCampaigns
     .filter(c => selectedProduct === 'ALL' || c.product === selectedProduct)
     .sort((a, b) => b.spend - a.spend || b.expectedDailyBudget - a.expectedDailyBudget);
 
   const s = aggregate(viewCampaigns);
 
-  // 4. Daily trend list sorted chronologically
+  // 4. Summarize leads for currently active view / tab
+  const activeLeadSummary = summarizeLeads(rawLeads, { product: selectedProduct });
+  const activeCpl = activeLeadSummary.l1Count > 0 ? round(s.spend / activeLeadSummary.l1Count) : 0;
+  const activeCpaL3 = activeLeadSummary.l3Count > 0 ? round(s.spend / activeLeadSummary.l3Count) : 0;
+  const activeCac = activeLeadSummary.l4Count > 0 ? round(s.spend / activeLeadSummary.l4Count) : 0;
+  const activeRoas = s.spend > 0 ? parseFloat((activeLeadSummary.revenue / s.spend).toFixed(2)) : 0;
+  const activeConvMsgToL1 = s.messages > 0 ? ratio(activeLeadSummary.l1Count, s.messages) : 0;
+
+  // 5. Daily trend list sorted chronologically
   const dailyTrend = [...dailyDateMap.values()]
     .sort((a, b) => a.date.localeCompare(b.date))
     .map(d => ({ ...d, cpa: d.messages > 0 ? round(d.spend / d.messages) : 0 }));
 
-  // 5. Placements breakdown for selected account & product
+  // 6. Placements breakdown
   const placementMap = new Map();
   for (const p of placementRecords) {
     if (selectedAccount !== 'ALL' && p.accountId !== selectedAccount) continue;
@@ -245,15 +285,45 @@ export function buildView(raw, options = {}) {
     scopeName = accObj ? accObj.name : `Tài khoản ${selectedAccount}`;
   }
 
+  // Build dedicated tab data for the 4 products
+  const productTabs = {};
+  TARGET_KEYS.forEach(key => {
+    const prodObj = products.find(p => p.key === key) || {};
+    const prodCamps = targetCampaigns.filter(c => c.product === key);
+    const prodLeads = summarizeLeads(rawLeads, { product: key });
+
+    productTabs[key] = {
+      key,
+      name: prodObj.name || key.toUpperCase(),
+      stats: prodObj,
+      campaigns: prodCamps,
+      funnel: {
+        impressions: prodObj.impressions || 0,
+        clicks: prodObj.clicks || 0,
+        messages: prodObj.messages || 0,
+        l1: prodLeads.l1Count,
+        l2: prodLeads.l2Count,
+        l3: prodLeads.l3Count,
+        l4: prodLeads.l4Count
+      },
+      recentEnrolled: (prodLeads.recentEnrolled || []).map(r => ({
+        ...r,
+        phoneMasked: maskPhone(r.phone)
+      }))
+    };
+  });
+
   return {
     fetchedAt: raw.fetchedAt,
     datePreset,
     dateRange: { startDate, endDate },
+    activeTab,
     scope: { ...raw.scope, accountId: selectedAccount, name: scopeName },
     bmAccounts: raw.bmAccounts || [],
     product: selectedProduct,
     accountId: selectedAccount,
     products,
+    productTabs,
     summary: {
       totalSpend: s.spend,
       totalMessages: s.messages,
@@ -269,12 +339,40 @@ export function buildView(raw, options = {}) {
       todayCpa: s.todayCpa,
       pacingPct: s.pacingPct,
       campaignCount: s.count,
-      activeCount: s.activeCount
+      activeCount: s.activeCount,
+      // Lead Funnel & Revenue Metrics
+      totalLeads: activeLeadSummary.totalLeads,
+      l1Count: activeLeadSummary.l1Count,
+      l2Count: activeLeadSummary.l2Count,
+      l3Count: activeLeadSummary.l3Count,
+      l4Count: activeLeadSummary.l4Count,
+      totalRevenue: activeLeadSummary.revenue,
+      cpl: activeCpl,
+      cpaL3: activeCpaL3,
+      cac: activeCac,
+      roas: activeRoas,
+      convMsgToL1: activeConvMsgToL1,
+      convL1toL2: activeLeadSummary.convL1toL2,
+      convL2toL3: activeLeadSummary.convL2toL3,
+      convL3toL4: activeLeadSummary.convL3toL4,
+      convTotal: activeLeadSummary.convTotal
     },
-    funnel: { impressions: s.impressions, clicks: s.clicks, messages: s.messages },
+    funnel: {
+      impressions: s.impressions,
+      clicks: s.clicks,
+      messages: s.messages,
+      l1: activeLeadSummary.l1Count,
+      l2: activeLeadSummary.l2Count,
+      l3: activeLeadSummary.l3Count,
+      l4: activeLeadSummary.l4Count
+    },
     dailyTrend,
     placements,
     campaigns: viewCampaigns,
+    recentEnrolled: (activeLeadSummary.recentEnrolled || []).map(r => ({
+      ...r,
+      phoneMasked: maskPhone(r.phone)
+    })),
     warnings: raw.warnings || []
   };
 }

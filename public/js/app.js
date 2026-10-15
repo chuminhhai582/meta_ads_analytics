@@ -1,7 +1,7 @@
 /**
- * Ucmas Ads Analytics — Client Application Logic
- * Offline-First / Local Data Lake Engine
- * Only #syncBtn triggers Meta API calls. All dropdowns & filters run 100% Local in < 10ms.
+ * Ucmas Ads Analytics — Client Application Logic v3
+ * Offline-First Local Data Lake + Google Sheet Lead Funnel (L1 ➔ L4)
+ * Dedicated Tabs for UCMAS, UCKID, MATHCA, TRẠI HÈ & Toàn BM.
  */
 
 // Global Chart.js instances
@@ -13,6 +13,7 @@ let placementChart = null;
 const appState = {
   view: null,
   analysis: null,
+  activeTab: 'all',
   selectedProduct: 'ALL',
   selectedAccount: 'ALL',
   selectedDatePreset: 'last_30d',
@@ -75,7 +76,7 @@ function showToast(message, type = 'info') {
   setTimeout(() => {
     toast.classList.add('leaving');
     setTimeout(() => toast.remove(), 300);
-  }, 3500);
+  }, 4000);
 }
 
 function refreshIcons() {
@@ -91,7 +92,16 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initEventListeners() {
-  // Sync button (ONLY user action that calls Meta API)
+  // Tabs Navigation
+  const tabButtons = document.querySelectorAll('.tab-btn[data-tab]');
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.getAttribute('data-tab');
+      switchTab(tab);
+    });
+  });
+
+  // Sync button (Meta API + Google Sheet)
   const syncBtn = document.getElementById('syncBtn');
   if (syncBtn) {
     syncBtn.addEventListener('click', () => triggerSync());
@@ -115,11 +125,15 @@ function initEventListeners() {
     });
   }
 
-  // Product select dropdown (100% Local slicing)
+  // Product select dropdown
   const productSelect = document.getElementById('productSelect');
   if (productSelect) {
     productSelect.addEventListener('change', () => {
-      selectProduct(productSelect.value);
+      const p = productSelect.value;
+      appState.activeTab = p === 'ALL' ? 'all' : p;
+      appState.selectedProduct = p;
+      updateActiveTabUI();
+      loadData();
     });
   }
 
@@ -199,6 +213,7 @@ function initEventListeners() {
       const token = document.getElementById('cfgToken').value.trim();
       const appId = document.getElementById('cfgAppId')?.value.trim() || '';
       const appSecret = document.getElementById('cfgAppSecret')?.value.trim() || '';
+      const sheetUrl = document.getElementById('cfgSheetUrl')?.value.trim() || '';
       const alertBox = document.getElementById('configAlertBox');
       const saveBtn = document.getElementById('saveConfigBtn');
 
@@ -209,17 +224,17 @@ function initEventListeners() {
         const res = await fetch('/api/save-config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accessToken: token, appId, appSecret })
+          body: JSON.stringify({ accessToken: token, appId, appSecret, sheetUrl })
         });
         const result = await res.json();
         if (res.ok && result.success) {
           alertBox.className = 'alert-box alert-success';
-          alertBox.textContent = 'Đã lưu token thành công! Đang đồng bộ dữ liệu...';
+          alertBox.textContent = 'Đã lưu cấu hình thành công! Đang đồng bộ dữ liệu...';
           alertBox.classList.remove('d-none');
           setTimeout(() => {
             closeModal();
             triggerSync();
-          }, 900);
+          }, 800);
         } else {
           alertBox.className = 'alert-box alert-error';
           alertBox.textContent = result.error || 'Lỗi khi lưu cấu hình';
@@ -238,16 +253,40 @@ function initEventListeners() {
   }
 }
 
+function switchTab(tabKey) {
+  appState.activeTab = tabKey;
+  appState.selectedProduct = tabKey === 'all' ? 'ALL' : tabKey;
+  updateActiveTabUI();
+  loadData();
+}
+
+function updateActiveTabUI() {
+  document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
+    const key = btn.getAttribute('data-tab');
+    if (key === appState.activeTab) {
+      btn.classList.add('active');
+    } else {
+      btn.classList.remove('active');
+    }
+  });
+
+  const productSelect = document.getElementById('productSelect');
+  if (productSelect) {
+    productSelect.value = appState.selectedProduct;
+  }
+}
+
 /**
- * Load sliced view from Local Data Lake in < 10ms (100% Offline / Local)
+ * Load sliced view from Local Data Lake in < 5ms (100% Offline / Local)
  */
 async function loadData() {
   const p = encodeURIComponent(appState.selectedProduct || 'ALL');
   const a = encodeURIComponent(appState.selectedAccount || 'ALL');
   const d = encodeURIComponent(appState.selectedDatePreset || 'last_30d');
+  const tab = encodeURIComponent(appState.activeTab || 'all');
 
   try {
-    const res = await fetch(`/api/data?product=${p}&accountId=${a}&datePreset=${d}`);
+    const res = await fetch(`/api/data?product=${p}&accountId=${a}&datePreset=${d}&tab=${tab}`);
     const json = await res.json();
 
     if (json.needsConfig) {
@@ -255,7 +294,7 @@ async function loadData() {
       return;
     }
     if (json.needsSync) {
-      showEmptyState('Chưa có dữ liệu đồng bộ', 'Hệ thống đã sẵn sàng kết nối. Bấm nút "Đồng bộ Meta Ads" để tải dữ liệu.');
+      showEmptyState('Chưa có dữ liệu đồng bộ', 'Hệ thống đã sẵn sàng kết nối. Bấm nút "Đồng bộ" để tải dữ liệu.');
       return;
     }
 
@@ -277,14 +316,11 @@ async function loadData() {
  * Switch product filter locally
  */
 async function selectProduct(productKey) {
-  appState.selectedProduct = productKey;
-  const select = document.getElementById('productSelect');
-  if (select && select.value !== productKey) select.value = productKey;
-  await loadData();
+  switchTab(productKey === 'ALL' ? 'all' : productKey);
 }
 
 /**
- * Trigger fresh sync from Meta API (ONLY called on #syncBtn)
+ * Trigger fresh sync from Meta API & Google Sheet
  */
 async function triggerSync() {
   const syncBtn = document.getElementById('syncBtn');
@@ -300,7 +336,8 @@ async function triggerSync() {
       body: JSON.stringify({
         datePreset: appState.selectedDatePreset,
         accountId: appState.selectedAccount,
-        productFilter: appState.selectedProduct
+        productFilter: appState.selectedProduct,
+        activeTab: appState.activeTab
       })
     });
     const result = await res.json();
@@ -310,7 +347,7 @@ async function triggerSync() {
       appState.view = result.view;
       appState.analysis = result.analysis;
       renderAll();
-      showToast(result.message || 'Đồng bộ dữ liệu thành công!', 'success');
+      showToast(result.message || 'Đồng bộ dữ liệu thành công!', result.metaWarning ? 'warning' : 'success');
     } else {
       showToast('Không thể đồng bộ: ' + (result.error || 'Lỗi không xác định'), 'error');
     }
@@ -359,6 +396,7 @@ function renderAll() {
   renderProductCards();
   renderCharts();
   renderFunnel();
+  renderEnrolledStudents();
   renderRecommendations();
   renderTable();
   refreshIcons();
@@ -375,6 +413,18 @@ function updateHeaderAndBadges() {
   if (badge) badge.className = 'account-badge badge-live';
   if (badgeText) badgeText.textContent = `Snapshot lúc ${dateStr} • Local Data Lake`;
 
+  // Update Tab Badges (Showing L4 count or campaigns)
+  const tabs = view.productTabs || {};
+  const badgeUcmas = document.getElementById('tabBadgeUcmas');
+  const badgeUckid = document.getElementById('tabBadgeUckid');
+  const badgeMathca = document.getElementById('tabBadgeMathca');
+  const badgeTraihe = document.getElementById('tabBadgeTraihe');
+
+  if (badgeUcmas && tabs.ucmas) badgeUcmas.textContent = `${tabs.ucmas.stats?.l4Count || 0} L4`;
+  if (badgeUckid && tabs.uckid) badgeUckid.textContent = `${tabs.uckid.stats?.l4Count || 0} L4`;
+  if (badgeMathca && tabs.mathca) badgeMathca.textContent = `${tabs.mathca.stats?.l1Count || tabs.mathca.campaigns?.length || 0} tin`;
+  if (badgeTraihe && tabs.traihe) badgeTraihe.textContent = `${tabs.traihe.campaigns?.length || 0} CĐ`;
+
   // Account select options
   const accountSelect = document.getElementById('accountSelect');
   if (accountSelect && view.bmAccounts) {
@@ -385,19 +435,6 @@ function updateHeaderAndBadges() {
       html += `<option value="${acc.numericId}" ${isSelected}>📊 ${acc.name} (${acc.id})</option>`;
     });
     accountSelect.innerHTML = html;
-  }
-
-  // Product select sync
-  const productSelect = document.getElementById('productSelect');
-  if (productSelect && productSelect.value !== view.product) {
-    productSelect.value = view.product || 'ALL';
-  }
-
-  // Date preset sync
-  const dateSelect = document.getElementById('datePresetSelect');
-  if (dateSelect && view.datePreset && dateSelect.value !== view.datePreset) {
-    dateSelect.value = view.datePreset;
-    appState.selectedDatePreset = view.datePreset;
   }
 
   // Scope line in hero
@@ -411,7 +448,7 @@ function updateHeaderAndBadges() {
   // Footer info
   const footerInfo = document.getElementById('footerInfo');
   if (footerInfo) {
-    footerInfo.textContent = `BM Ucmas Việt Nam (${view.scope?.businessId || '2590933284556026'}) • Graph API v21.0 • ${view.summary.campaignCount} chiến dịch • Chế độ Offline-First`;
+    footerInfo.textContent = `BM Ucmas Việt Nam (${view.scope?.businessId || '2590933284556026'}) • Graph API v21.0 • Google Sheets CRM • ${view.summary.campaignCount} chiến dịch • Chế độ Offline-First`;
   }
 }
 
@@ -442,6 +479,18 @@ function renderAiHero() {
 
   const scoreEl = document.getElementById('aiHealthScore');
   if (scoreEl) scoreEl.textContent = score;
+
+  const heroTabTitle = document.getElementById('heroTabTitle');
+  if (heroTabTitle) {
+    const tabTitles = {
+      all: 'Chẩn Đoán Toàn BM Ucmas Việt Nam',
+      ucmas: 'Phân Tích Chuyên Sâu UCMAS (Toán Trí Tuệ)',
+      uckid: 'Phân Tích Chuyên Sâu UCKID (Tiền Tiểu Học)',
+      mathca: 'Phân Tích Chuyên Sâu MATHCA',
+      traihe: 'Phân Tích Chuyên Sâu TRẠI HÈ'
+    };
+    heroTabTitle.textContent = tabTitles[appState.activeTab] || 'Chẩn Đoán Tự Động';
+  }
 
   const statusPill = document.getElementById('aiStatusPill');
   if (statusPill) {
@@ -478,17 +527,13 @@ function renderKpis() {
     el.textContent = periodText;
   });
 
-  // 1. Expected daily budget
+  // 1. Expected daily budget & Pacing
   const kpiBudget = document.getElementById('kpiBudget');
-  const kpiBudgetSub = document.getElementById('kpiBudgetSub');
-  if (kpiBudget) kpiBudget.textContent = formatCurrency(s.expectedDailyBudget);
-  if (kpiBudgetSub) kpiBudgetSub.textContent = `${s.activeCount || 0} chiến dịch đang chạy thực tế`;
-
-  // 2. Today spend & pacing
   const kpiTodaySpend = document.getElementById('kpiTodaySpend');
   const kpiPacingBar = document.getElementById('kpiPacingBar');
   const kpiPacingText = document.getElementById('kpiPacingText');
-  if (kpiTodaySpend) kpiTodaySpend.textContent = formatCurrency(s.todaySpend);
+  if (kpiBudget) kpiBudget.textContent = formatCurrency(s.expectedDailyBudget);
+  if (kpiTodaySpend) kpiTodaySpend.textContent = `Đã chi: ${formatCurrency(s.todaySpend)}`;
   if (kpiPacingBar) {
     const pct = Math.min(100, Math.max(0, s.pacingPct || 0));
     kpiPacingBar.style.width = `${pct}%`;
@@ -497,27 +542,19 @@ function renderKpis() {
   }
   if (kpiPacingText) {
     kpiPacingText.textContent = s.expectedDailyBudget > 0
-      ? `Tiến độ: ${s.pacingPct}% ngân sách ngày`
-      : 'Không có ngân sách ngày';
+      ? `Tiến độ: ${s.pacingPct}% (${formatNumber(s.todayMessages || 0)} tin hôm nay)`
+      : `${s.activeCount || 0} CĐ đang chạy`;
   }
 
-  // 3. Today messages
-  const kpiTodayMessages = document.getElementById('kpiTodayMessages');
-  const kpiTodayCpa = document.getElementById('kpiTodayCpa');
-  if (kpiTodayMessages) kpiTodayMessages.textContent = `${formatNumber(s.todayMessages)} tin`;
-  if (kpiTodayCpa) {
-    kpiTodayCpa.textContent = s.todayMessages > 0
-      ? `Giá/tin hôm nay: ${formatCurrency(s.todayCpa)}`
-      : 'Chưa có tin nhắn hôm nay';
-  }
-
-  // 4. Period spend
+  // 2. Period spend, CPM, CTR
   const kpiSpend = document.getElementById('kpiSpend');
   const kpiCpm = document.getElementById('kpiCpm');
+  const kpiCtr = document.getElementById('kpiCtr');
   if (kpiSpend) kpiSpend.textContent = formatCurrency(s.totalSpend);
   if (kpiCpm) kpiCpm.textContent = `CPM: ${formatCurrency(s.avgCpm)}`;
+  if (kpiCtr) kpiCtr.textContent = `CTR: ${(s.avgCtr || 0).toFixed(2)}% (${formatNumber(s.totalClicks)} clicks)`;
 
-  // 5. Period messages & CPA
+  // 3. Messages & CPA
   const kpiMessages = document.getElementById('kpiMessages');
   const kpiCpa = document.getElementById('kpiCpa');
   const kpiCpaVerdict = document.getElementById('kpiCpaVerdict');
@@ -539,29 +576,52 @@ function renderKpis() {
     }
   }
 
-  // 6. CTR & CPC
-  const kpiCtr = document.getElementById('kpiCtr');
-  const kpiCpc = document.getElementById('kpiCpc');
-  const kpiClicks = document.getElementById('kpiClicks');
-  if (kpiCtr) kpiCtr.textContent = `${(s.avgCtr || 0).toFixed(2)}%`;
-  if (kpiCpc) kpiCpc.textContent = `CPC: ${formatCurrency(s.avgCpc)}`;
-  if (kpiClicks) kpiClicks.textContent = `${formatNumber(s.totalClicks)} lượt click`;
+  // 4. Số điện thoại (L1) & Giá/SĐT (CPL)
+  const kpiLeads = document.getElementById('kpiLeads');
+  const kpiCpl = document.getElementById('kpiCpl');
+  const kpiConvMsgToL1 = document.getElementById('kpiConvMsgToL1');
+  if (kpiLeads) kpiLeads.textContent = `${formatNumber(s.l1Count || s.totalLeads || 0)} SĐT`;
+  if (kpiCpl) kpiCpl.textContent = `Giá/SĐT: ${formatCurrency(s.cpl)}`;
+  if (kpiConvMsgToL1) {
+    kpiConvMsgToL1.textContent = s.convMsgToL1 > 0 ? `% Ra số: ${s.convMsgToL1}%` : `L2 tiếp cận: ${formatNumber(s.l2Count || 0)}`;
+  }
+
+  // 5. Học viên chốt (L4) & Giá/Học viên (CAC)
+  const kpiL4 = document.getElementById('kpiL4');
+  const kpiCac = document.getElementById('kpiCac');
+  const kpiConvTotal = document.getElementById('kpiConvTotal');
+  if (kpiL4) kpiL4.textContent = `${formatNumber(s.l4Count || 0)} học viên`;
+  if (kpiCac) kpiCac.textContent = `Chi phí/HV (CAC): ${formatCurrency(s.cac)}`;
+  if (kpiConvTotal) kpiConvTotal.textContent = `% Chốt tuyển sinh: ${s.convTotal || 0}%`;
+
+  // 6. Doanh thu học phí & ROAS
+  const kpiRevenue = document.getElementById('kpiRevenue');
+  const kpiRoas = document.getElementById('kpiRoas');
+  const kpiL3Count = document.getElementById('kpiL3Count');
+  if (kpiRevenue) kpiRevenue.textContent = formatCurrency(s.totalRevenue);
+  if (kpiRoas) kpiRoas.textContent = `ROAS thực: ${s.roas || 0}x`;
+  if (kpiL3Count) kpiL3Count.textContent = `Hẹn test (L3): ${formatNumber(s.l3Count || 0)}`;
 }
 
 function renderProductCards() {
   const container = document.getElementById('productsGrid');
-  if (!container) return;
-  const products = appState.view?.products || [];
-  const activeKey = appState.selectedProduct;
+  const section = document.getElementById('productsSection');
+  if (!container || !section) return;
 
+  // Show 4-product comparison cards on Overview tab (all), or allow switching
+  if (appState.activeTab !== 'all') {
+    section.classList.add('d-none');
+    return;
+  }
+  section.classList.remove('d-none');
+
+  const products = appState.view?.products || [];
   let html = '';
   products.forEach(p => {
-    const isActive = activeKey === p.key;
-    const isDimmed = activeKey !== 'ALL' && !isActive;
     const pacing = Math.min(100, Math.max(0, p.pacingPct || 0));
 
     html += `
-      <button type="button" class="product-card prod-${p.key} ${isActive ? 'active' : ''} ${isDimmed ? 'dimmed' : ''}" data-product="${p.key}">
+      <button type="button" class="product-card prod-${p.key}" data-tab="${p.key}">
         <div class="product-card-header">
           <div>
             <div class="product-name">${p.name}</div>
@@ -576,25 +636,23 @@ function renderProductCards() {
             <span class="pstat-val" style="color: var(--prod);">${formatCurrency(p.spend)}</span>
           </div>
           <div class="pstat-item">
-            <span class="pstat-label">Ngân sách/ngày</span>
-            <span class="pstat-val text-success">${p.expectedDailyBudget > 0 ? formatCurrency(p.expectedDailyBudget) : '0 ₫'}</span>
+            <span class="pstat-label">Tin nhắn (CPA)</span>
+            <span class="pstat-val">${formatNumber(p.messages)} tin (${formatCurrency(p.cpa)})</span>
           </div>
           <div class="pstat-item">
-            <span class="pstat-label">Tin nhắn</span>
-            <span class="pstat-val">${formatNumber(p.messages)} tin</span>
+            <span class="pstat-label">SĐT (L1) / Hẹn (L3)</span>
+            <span class="pstat-val text-primary">${formatNumber(p.l1Count || 0)} / ${formatNumber(p.l3Count || 0)}</span>
           </div>
           <div class="pstat-item">
-            <span class="pstat-label">Giá/tin (CPA)</span>
-            <span class="pstat-val ${p.cpa > 0 && p.cpa <= 65000 ? 'text-success' : (p.cpa > 90000 ? 'text-danger' : '')}">
-              ${p.messages > 0 ? formatCurrency(p.cpa) : (p.spend === 0 ? 'Chưa chi tiêu' : '0 tin nhắn')}
-            </span>
+            <span class="pstat-label">Học viên chốt (L4)</span>
+            <span class="pstat-val text-success"><strong>${formatNumber(p.l4Count || 0)} HV</strong> (${formatCurrency(p.cac)})</span>
           </div>
         </div>
 
         <div class="product-today">
           <div class="product-today-row">
-            <span>Chi hôm nay: <strong>${formatCurrency(p.todaySpend)}</strong></span>
-            <span>${p.todayMessages} tin</span>
+            <span>Doanh thu: <strong class="text-warning">${formatCurrency(p.revenue || 0)}</strong></span>
+            <span>Chi hôm nay: ${formatCurrency(p.todaySpend)}</span>
           </div>
           <div class="progress-track" aria-hidden="true">
             <div class="progress-bar" style="width: ${pacing}%;"></div>
@@ -608,9 +666,8 @@ function renderProductCards() {
 
   container.querySelectorAll('.product-card').forEach(card => {
     card.addEventListener('click', () => {
-      const key = card.getAttribute('data-product');
-      const nextKey = appState.selectedProduct === key ? 'ALL' : key;
-      selectProduct(nextKey);
+      const tab = card.getAttribute('data-tab');
+      switchTab(tab);
     });
   });
 }
@@ -649,19 +706,21 @@ function renderDailyChart() {
         {
           label: 'Chi tiêu',
           data: daily.map(d => d.spend),
-          backgroundColor: 'rgba(0, 128, 251, 0.65)',
-          borderRadius: 6,
+          backgroundColor: 'rgba(56, 189, 248, 0.45)',
+          borderColor: '#38bdf8',
+          borderWidth: 1.5,
+          borderRadius: 4,
           yAxisID: 'y'
         },
         {
           label: 'Tin nhắn',
-          type: 'line',
           data: daily.map(d => d.messages),
-          borderColor: '#34d399',
-          backgroundColor: '#34d399',
-          borderWidth: 3,
+          type: 'line',
+          borderColor: '#c084fc',
+          backgroundColor: '#c084fc',
           pointRadius: 3,
           pointHoverRadius: 6,
+          borderWidth: 2.5,
           tension: 0.3,
           yAxisID: 'y1'
         }
@@ -672,20 +731,20 @@ function renderDailyChart() {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { position: 'top', align: 'end', labels: { boxWidth: 10, padding: 12 } },
+        legend: { position: 'top', labels: { boxWidth: 12, padding: 12 } },
         tooltip: {
           backgroundColor: '#0f1523',
           borderColor: 'rgba(255, 255, 255, 0.1)',
           borderWidth: 1,
-          padding: 12,
+          padding: 10,
           callbacks: {
-            label: function(ctx) {
-              if (ctx.dataset.yAxisID === 'y1') {
-                const row = daily[ctx.dataIndex];
-                const cpaStr = row && row.cpa > 0 ? ` (CPA: ${formatCurrency(row.cpa)})` : '';
-                return `Tin nhắn: ${formatNumber(ctx.parsed.y)}${cpaStr}`;
+            label: (ctx) => {
+              if (ctx.dataset.yAxisID === 'y') {
+                return `Chi tiêu: ${formatCurrency(ctx.parsed.y)}`;
               }
-              return `Chi tiêu: ${formatCurrency(ctx.parsed.y)}`;
+              const d = daily[ctx.dataIndex];
+              const cpaStr = d && d.cpa ? ` (CPA: ${formatCurrency(d.cpa)})` : '';
+              return `Tin nhắn: ${ctx.parsed.y} tin${cpaStr}`;
             }
           }
         }
@@ -711,6 +770,9 @@ function renderDailyChart() {
   });
 }
 
+/**
+ * 6-Stage Education Sales Funnel
+ */
 function renderFunnel() {
   const container = document.getElementById('funnelVisual');
   if (!container) return;
@@ -719,28 +781,81 @@ function renderFunnel() {
   const impressions = f.impressions || 0;
   const clicks = f.clicks || 0;
   const messages = f.messages || 0;
+  const l1 = f.l1 || 0;
+  const l2 = f.l2 || 0;
+  const l3 = f.l3 || 0;
+  const l4 = f.l4 || 0;
 
   const ctr = impressions > 0 ? ((clicks / impressions) * 100).toFixed(2) : '0.00';
   const cvr = clicks > 0 ? ((messages / clicks) * 100).toFixed(2) : '0.00';
+  const msgToL1 = messages > 0 ? ((l1 / messages) * 100).toFixed(1) : '0.0';
+  const l1ToL2 = l1 > 0 ? ((l2 / l1) * 100).toFixed(1) : '0.0';
+  const l2ToL3 = l2 > 0 ? ((l3 / l2) * 100).toFixed(1) : '0.0';
+  const l3ToL4 = l3 > 0 ? ((l4 / l3) * 100).toFixed(1) : '0.0';
 
-  const steps = [
-    { name: '1. Lượt hiển thị (Impressions)', val: impressions, pct: 100, rate: null },
-    { name: '2. Lượt nhấp (Clicks)', val: clicks, pct: impressions > 0 ? Math.max(12, Math.min(100, (clicks / impressions) * 100 * 15)) : 0, rate: `Tỷ lệ click (CTR): ${ctr}%` },
-    { name: '3. Tin nhắn / Chuyển đổi', val: messages, pct: clicks > 0 ? Math.max(8, Math.min(100, (messages / clicks) * 100 * 5)) : 0, rate: `Tỷ lệ nhắn tin / click: ${cvr}%` }
+  const stages = [
+    { label: '1. Hiển thị (Impressions)', val: impressions, color: 'linear-gradient(90deg, #38bdf8, #0284c7)', rate: `CTR: ${ctr}%` },
+    { label: '2. Lượt nhấp (Clicks)', val: clicks, color: 'linear-gradient(90deg, #818cf8, #4f46e5)', rate: `Click/Hiển thị` },
+    { label: '3. Tin nhắn (Messaging)', val: messages, color: 'linear-gradient(90deg, #c084fc, #9333ea)', rate: `Ra tin: ${cvr}%` },
+    { label: '4. SĐT mới (L1 Lead)', val: l1, color: 'linear-gradient(90deg, #38bdf8, #0369a1)', rate: `Xin số: ${msgToL1}%` },
+    { label: '5. Đặt lịch hẹn (L3)', val: l3, color: 'linear-gradient(90deg, #fb923c, #ea580c)', rate: `Hẹn test: ${l2ToL3}%` },
+    { label: '6. Nhập học (L4 Chốt)', val: l4, color: 'linear-gradient(90deg, #34d399, #059669)', rate: `Chốt: ${l3ToL4}%` }
   ];
 
+  const maxVal = Math.max(impressions, 1);
+
   let html = '';
-  steps.forEach(step => {
+  stages.forEach(st => {
+    // Relative visual width for nice display
+    const w = st.val > 0 ? Math.max(15, Math.min(100, Math.log10(st.val + 1) / Math.log10(maxVal + 1) * 100)) : 4;
     html += `
-      <div class="funnel-step">
-        <div class="funnel-step-header">
-          <span class="funnel-step-name">${step.name}</span>
-          <span class="funnel-step-val">${formatNumber(step.val)}</span>
+      <div class="funnel-stage-row">
+        <div class="funnel-stage-label">
+          <span>${st.label}</span>
         </div>
-        <div class="funnel-track" aria-hidden="true">
-          <div class="funnel-bar" style="width: ${step.pct}%;"></div>
+        <div class="funnel-stage-bar-bg" aria-hidden="true">
+          <div class="funnel-stage-bar-fill" style="width: ${w}%; background: ${st.color};">
+            ${formatNumber(st.val)}
+          </div>
         </div>
-        ${step.rate ? `<span class="funnel-rate">${step.rate}</span>` : ''}
+        <div class="funnel-stage-rate">${st.rate}</div>
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
+function renderEnrolledStudents() {
+  const section = document.getElementById('enrolledSection');
+  const container = document.getElementById('enrolledGrid');
+  const countBadge = document.getElementById('enrolledCountBadge');
+  const title = document.getElementById('enrolledTitle');
+  if (!section || !container) return;
+
+  const enrolled = appState.view?.recentEnrolled || [];
+  if (enrolled.length === 0) {
+    section.classList.add('d-none');
+    return;
+  }
+
+  section.classList.remove('d-none');
+  const tabName = appState.activeTab === 'all' ? 'Toàn BM' : appState.activeTab.toUpperCase();
+  if (title) title.textContent = `Học viên chốt thành công gần nhất (${tabName} • ${enrolled.length} học viên)`;
+  if (countBadge) countBadge.textContent = `${enrolled.length} học viên`;
+
+  let html = '';
+  enrolled.forEach(item => {
+    html += `
+      <div class="enrolled-card">
+        <div>
+          <div class="enrolled-phone">📱 ${item.phoneMasked}</div>
+          <div class="enrolled-date">Ngày chốt: <strong>${item.l4Date || item.entryDate}</strong> • ${item.fanpage || 'Trang chính'}</div>
+        </div>
+        <div class="text-right">
+          <span class="badge-level badge-l4">Đã chốt L4</span>
+          <div class="enrolled-rev">${item.revenue > 0 ? formatCurrency(item.revenue) : 'Đã nhập học'}</div>
+        </div>
       </div>
     `;
   });
@@ -771,8 +886,8 @@ function renderCampaignChart() {
       datasets: [{
         label: 'Chi tiêu',
         data: campaigns.map(c => c.spend),
-        backgroundColor: campaigns.map(c => PRODUCT_COLORS[c.product] || '#0080fb'),
-        borderRadius: 6
+        backgroundColor: campaigns.map(c => PRODUCT_COLORS[c.product] || '#38bdf8'),
+        borderRadius: 4
       }]
     },
     options: {
@@ -784,19 +899,22 @@ function renderCampaignChart() {
         tooltip: {
           backgroundColor: '#0f1523',
           callbacks: {
+            title: (items) => campaigns[items[0].dataIndex]?.name || '',
             label: (ctx) => {
-              const camp = campaigns[ctx.dataIndex];
-              return `Chi: ${formatCurrency(camp.spend)} • ${camp.messages} tin (CPA: ${formatCurrency(camp.cpa)})`;
+              const c = campaigns[ctx.dataIndex];
+              return [
+                `Sản phẩm: ${c.productLabel}`,
+                `Chi tiêu: ${formatCurrency(c.spend)}`,
+                `Tin nhắn: ${formatNumber(c.messages)} tin (CPA: ${formatCurrency(c.cpa)})`
+              ];
             }
           }
         }
       },
       scales: {
         x: {
-          grid: { color: 'rgba(255, 255, 255, 0.05)' },
-          ticks: {
-            callback: (v) => v >= 1000000 ? `${(v / 1000000).toFixed(0)}Tr` : v
-          }
+          grid: { color: 'rgba(255, 255, 255, 0.04)' },
+          ticks: { callback: (v) => v >= 1000000 ? `${(v / 1000000).toFixed(1)}Tr` : v }
         },
         y: { grid: { display: false } }
       }
@@ -857,7 +975,6 @@ function renderRecommendations() {
   const analysis = appState.analysis || {};
   const recs = analysis.recommendations || [];
 
-  // Macro insights
   insightContainer.innerHTML = recs.map(r => `
     <div class="insight-item type-${r.type || 'info'}">
       <strong>${r.title}</strong>
@@ -865,7 +982,6 @@ function renderRecommendations() {
     </div>
   `).join('');
 
-  // Micro campaign cards
   const cards = [];
 
   (analysis.topPerformers || []).slice(0, 4).forEach(item => {
@@ -942,7 +1058,6 @@ function renderTable() {
 
   // 1. Filter
   let filtered = all.filter(c => {
-    // Search
     if (q) {
       const matchName = c.name.toLowerCase().includes(q);
       const matchId = String(c.id).includes(q);
@@ -950,11 +1065,10 @@ function renderTable() {
       if (!matchName && !matchId && !matchAcc) return false;
     }
 
-    // Status filter
     if (statusFilter === 'ACTIVE') return c.effective_status === 'ACTIVE';
     if (statusFilter === 'INACTIVE') return c.effective_status !== 'ACTIVE';
     if (statusFilter === 'SPENT') return c.spend > 0;
-    return true; // 'ALL'
+    return true;
   });
 
   // 2. Sort
@@ -997,7 +1111,6 @@ function renderTable() {
 
     const statusPillClass = c.effective_status === 'ACTIVE' ? 'tone-success' : 'tone-neutral';
     const statusLabel = STATUS_TEXT[c.effective_status] || c.effective_status;
-
     const cpaClass = c.messages > 0 && c.cpa <= 65000 ? 'text-success' : (c.cpa > 130000 ? 'text-danger' : '');
 
     html += `
