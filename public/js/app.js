@@ -66,6 +66,15 @@ function formatNumber(val) {
   return new Intl.NumberFormat('vi-VN').format(val);
 }
 
+function formatCompactNumber(val) {
+  if (val === undefined || val === null || isNaN(val) || val === 0) return '0';
+  const abs = Math.abs(val);
+  if (abs >= 1e9) return (val / 1e9).toFixed(1) + 'B';
+  if (abs >= 1e6) return (val / 1e6).toFixed(1) + 'Tr';
+  if (abs >= 1e3) return Math.round(val / 1e3) + 'K';
+  return String(val);
+}
+
 function showToast(message, type = 'info') {
   const container = document.getElementById('toastContainer');
   if (!container) return;
@@ -1047,6 +1056,25 @@ function renderRecommendations() {
   gridContainer.innerHTML = cards.join('');
 }
 
+function renderPlatformTags(c) {
+  if (!c.spend || c.spend <= 0) return '<span class="text-muted">–</span>';
+  const plats = c.platformBreakdown || [];
+  if (plats.length === 0) return '<span class="plat-badge plat-fb">FB 100%</span>';
+
+  return `
+    <div class="plat-tags-cell">
+      ${plats.map(p => {
+        let cls = 'plat-fb';
+        if (p.platform === 'instagram') cls = 'plat-ig';
+        else if (p.platform === 'messenger') cls = 'plat-msg';
+        else if (p.platform === 'audience_network') cls = 'plat-aud';
+        else if (p.platform === 'other') cls = 'plat-other';
+        return `<span class="plat-badge ${cls}" title="${p.label}: ${formatCurrency(p.spend)} (${p.pct}%)"><strong>${p.short}:</strong> ${formatCompactNumber(p.spend)}</span>`;
+      }).join('')}
+    </div>
+  `;
+}
+
 function renderTable() {
   const tbody = document.getElementById('campaignsTableBody');
   const countBadge = document.getElementById('campaignCountBadge');
@@ -1094,7 +1122,7 @@ function renderTable() {
   if (countBadge) countBadge.textContent = `${filtered.length} chiến dịch`;
 
   if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="11" class="table-empty">Không tìm thấy chiến dịch nào phù hợp với bộ lọc hiện tại</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="16" class="table-empty">Không tìm thấy chiến dịch nào phù hợp với bộ lọc hiện tại</td></tr>`;
     return;
   }
 
@@ -1112,6 +1140,24 @@ function renderTable() {
     const statusPillClass = c.effective_status === 'ACTIVE' ? 'tone-success' : 'tone-neutral';
     const statusLabel = STATUS_TEXT[c.effective_status] || c.effective_status;
     const cpaClass = c.messages > 0 && c.cpa <= 65000 ? 'text-success' : (c.cpa > 130000 ? 'text-danger' : '');
+
+    const l1Html = c.l1Count > 0
+      ? `<span class="camp-l1-val">${formatNumber(c.l1Count)}</span><span class="sub-stat">${formatCurrency(c.cpl)}/số</span>`
+      : `<span class="text-muted">–</span>`;
+
+    const l3Html = c.l3Count > 0
+      ? `<span class="camp-l3-val">${formatNumber(c.l3Count)}</span><span class="sub-stat">${formatCurrency(c.cpaL3)}/hẹn</span>`
+      : `<span class="text-muted">–</span>`;
+
+    const l4Html = c.l4Count > 0
+      ? `<span class="camp-l4-val">${formatNumber(c.l4Count)}</span><span class="sub-stat">CAC: ${formatCurrency(c.cac)}</span>`
+      : `<span class="text-muted">–</span>`;
+
+    const revHtml = c.revenue > 0
+      ? `<span class="camp-rev-val">${formatCurrency(c.revenue)}</span><span class="sub-stat">ROAS: ${c.roas || 0}x</span>`
+      : `<span class="text-muted">–</span>`;
+
+    const platformHtml = renderPlatformTags(c);
 
     html += `
       <tr>
@@ -1142,6 +1188,21 @@ function renderTable() {
         </td>
         <td class="num ${cpaClass}">
           ${c.messages > 0 ? formatCurrency(c.cpa) : '<span class="text-muted">–</span>'}
+        </td>
+        <td class="num">
+          ${l1Html}
+        </td>
+        <td class="num">
+          ${l3Html}
+        </td>
+        <td class="num">
+          ${l4Html}
+        </td>
+        <td class="num">
+          ${revHtml}
+        </td>
+        <td>
+          ${platformHtml}
         </td>
         <td class="num">
           ${(c.ctr || 0).toFixed(2)}%

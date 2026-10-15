@@ -176,8 +176,81 @@ export function buildView(raw, options = {}) {
     }
   }
 
-  // 2. Map all campaigns with aggregated metrics
-  const allFilteredCampaigns = (raw.campaigns || [])
+  // 1.5. Index placement spend per campaign
+  const campPlacementsMap = new Map();
+  for (const p of placementRecords) {
+    if (selectedAccount !== 'ALL' && p.accountId !== selectedAccount) continue;
+    const cur = campPlacementsMap.get(p.campaignId) || {
+      fbSpend: 0,
+      igSpend: 0,
+      msgSpend: 0,
+      audSpend: 0,
+      otherSpend: 0,
+      total: 0
+    };
+    if (p.platform === 'facebook') cur.fbSpend += p.spend || 0;
+    else if (p.platform === 'instagram') cur.igSpend += p.spend || 0;
+    else if (p.platform === 'messenger') cur.msgSpend += p.spend || 0;
+    else if (p.platform === 'audience_network') cur.audSpend += p.spend || 0;
+    else cur.otherSpend += p.spend || 0;
+    cur.total += p.spend || 0;
+    campPlacementsMap.set(p.campaignId, cur);
+  }
+
+  // 1.6. Match leads directly to campaigns via Ad ID or matching 11-digit prefix
+  const directLeadsMap = new Map();
+  const assignedLeadIds = new Set();
+  const rawCampaignsList = raw.campaigns || [];
+
+  for (const l of rawLeads) {
+    if (!l.adId) continue;
+    const matchedCamp = rawCampaignsList.find(c =>
+      c.id === l.adId ||
+      (c.product === l.product && l.adId.length >= 11 && c.id.slice(0, 11) === l.adId.slice(0, 11))
+    );
+    if (matchedCamp) {
+      assignedLeadIds.add(l.id);
+      const cur = directLeadsMap.get(matchedCamp.id) || { l1: 0, l2: 0, l3: 0, l4: 0, revenue: 0 };
+      if (l.l1) cur.l1++;
+      if (l.l2) cur.l2++;
+      if (l.l3) cur.l3++;
+      if (l.l4) cur.l4++;
+      cur.revenue += l.revenue || 0;
+      directLeadsMap.set(matchedCamp.id, cur);
+    }
+  }
+
+  // Group unassigned leads by product
+  const unassignedByProduct = {};
+  TARGET_KEYS.forEach(k => {
+    unassignedByProduct[k] = { l1: 0, l2: 0, l3: 0, l4: 0, revenue: 0 };
+  });
+  for (const l of rawLeads) {
+    if (assignedLeadIds.has(l.id)) continue;
+    const bucket = unassignedByProduct[l.product];
+    if (bucket) {
+      if (l.l1) bucket.l1++;
+      if (l.l2) bucket.l2++;
+      if (l.l3) bucket.l3++;
+      if (l.l4) bucket.l4++;
+      bucket.revenue += l.revenue || 0;
+    }
+  }
+
+  // Total spend per product for proportional allocation
+  const productSpendMap = {};
+  TARGET_KEYS.forEach(k => { productSpendMap[k] = 0; });
+  for (const c of rawCampaignsList) {
+    if (selectedAccount !== 'ALL' && c.accountId !== selectedAccount) continue;
+    const agg = dailyRecords.length > 0 ? (campAggMap.get(c.id) || { spend: 0 }) : c;
+    const sp = agg.spend || 0;
+    if (sp > 0 && productSpendMap[c.product] !== undefined) {
+      productSpendMap[c.product] += sp;
+    }
+  }
+
+  // 2. Map all campaigns with aggregated metrics + lead funnel & platform breakdown
+  const allFilteredCampaigns = rawCampaignsList
     .filter(c => selectedAccount === 'ALL' || c.accountId === selectedAccount)
     .map(c => {
       const agg = dailyRecords.length > 0 ? (campAggMap.get(c.id) || { spend: 0, messages: 0, impressions: 0, clicks: 0 }) : c;
@@ -187,6 +260,41 @@ export function buildView(raw, options = {}) {
       const messages = agg.messages || 0;
       const impressions = agg.impressions || 0;
       const clicks = agg.clicks || 0;
+
+      // Placement metrics
+      const plc = campPlacementsMap.get(c.id) || { fbSpend: 0, igSpend: 0, msgSpend: 0, audSpend: 0, otherSpend: 0, total: 0 };
+      let fbSpend = plc.fbSpend;
+      let igSpend = plc.igSpend;
+      let msgSpend = plc.msgSpend;
+      let audSpend = plc.audSpend;
+      let otherSpend = plc.otherSpend;
+      if (spend > 0 && plc.total === 0) {
+        fbSpend = spend;
+      }
+      const platformBreakdown = [];
+      const baseSpend = spend > 0 ? spend : 1;
+      if (fbSpend > 0) platformBreakdown.push({ platform: 'facebook', short: 'FB', label: 'Facebook', spend: fbSpend, pct: round((fbSpend / baseSpend) * 100) });
+      if (igSpend > 0) platformBreakdown.push({ platform: 'instagram', short: 'IG', label: 'Instagram', spend: igSpend, pct: round((igSpend / baseSpend) * 100) });
+      if (msgSpend > 0) platformBreakdown.push({ platform: 'messenger', short: 'Msg', label: 'Messenger', spend: msgSpend, pct: round((msgSpend / baseSpend) * 100) });
+      if (audSpend > 0) platformBreakdown.push({ platform: 'audience_network', short: 'Aud', label: 'Audience Net', spend: audSpend, pct: round((audSpend / baseSpend) * 100) });
+      if (otherSpend > 0) platformBreakdown.push({ platform: 'other', short: 'Khác', label: 'Khác', spend: otherSpend, pct: round((otherSpend / baseSpend) * 100) });
+
+      // Leads metrics (direct + proportional)
+      const direct = directLeadsMap.get(c.id) || { l1: 0, l2: 0, l3: 0, l4: 0, revenue: 0 };
+      const unassigned = unassignedByProduct[c.product] || { l1: 0, l2: 0, l3: 0, l4: 0, revenue: 0 };
+      const prodTotalSpend = productSpendMap[c.product] || 0;
+      const weight = (spend > 0 && prodTotalSpend > 0) ? (spend / prodTotalSpend) : 0;
+
+      const l1Count = direct.l1 + Math.round(unassigned.l1 * weight);
+      const l2Count = direct.l2 + Math.round(unassigned.l2 * weight);
+      const l3Count = direct.l3 + Math.round(unassigned.l3 * weight);
+      const l4Count = direct.l4 + Math.round(unassigned.l4 * weight);
+      const revenue = direct.revenue + Math.round(unassigned.revenue * weight);
+
+      const cpl = l1Count > 0 ? round(spend / l1Count) : 0;
+      const cac = l4Count > 0 ? round(spend / l4Count) : 0;
+      const cpaL3 = l3Count > 0 ? round(spend / l3Count) : 0;
+      const roas = spend > 0 ? parseFloat((revenue / spend).toFixed(2)) : 0;
 
       return {
         ...c,
@@ -199,7 +307,27 @@ export function buildView(raw, options = {}) {
         cpm: impressions > 0 ? round((spend / impressions) * 1000) : 0,
         cpa: messages > 0 ? round(spend / messages) : 0,
         todaySpend: t.spend || 0,
-        todayMessages: t.messages || 0
+        todayMessages: t.messages || 0,
+        // Platform breakdown
+        fbSpend,
+        igSpend,
+        msgSpend,
+        audSpend,
+        otherSpend,
+        platformBreakdown,
+        // Lead & funnel metrics
+        l1Count,
+        l2Count,
+        l3Count,
+        l4Count,
+        revenue,
+        cpl,
+        cpaL3,
+        cac,
+        roas,
+        directL1: direct.l1,
+        directL4: direct.l4,
+        directRevenue: direct.revenue
       };
     });
 
