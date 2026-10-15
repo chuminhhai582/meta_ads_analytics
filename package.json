@@ -1,0 +1,28 @@
+{
+  "name": "local-phantich-ads",
+  "version": "1.0.0",
+  "description": "Meta Ads Local Data Extraction, MCP Integration and AI Analytics Dashboard",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "fetch": "node src/meta-api.js",
+    "mcp": "node mcp-launcher.js"
+  },
+  "keywords": [
+    "meta-ads",
+    "facebook-ads",
+    "mcp",
+    "analytics",
+    "dashboard"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@mikusnuz/meta-ads-mcp": "^1.5.0",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0"
+  }
+}

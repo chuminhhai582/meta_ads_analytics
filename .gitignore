@@ -1,0 +1,8 @@
+node_modules/
+.env
+backup_*/
+data/*.csv
+data/*.json
+!data/README.md
+.DS_Store
+Thumbs.db

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "meta-ads": {
+      "command": "node",
+      "args": ["e:/hai/TOOL AI CODE/Local_phantich_ads/mcp-launcher.js"]
+    }
+  }
+}

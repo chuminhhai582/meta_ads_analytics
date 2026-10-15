@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ucmas Ads Analytics — Báo cáo Meta Ads BM Ucmas Việt Nam</title>
+  <meta name="description" content="Bảng điều khiển nội bộ phân tích quảng cáo Meta của BM Ucmas Việt Nam theo tài khoản và 4 sản phẩm UCMAS, UCKID, MATHCA, TRẠI HÈ: ngân sách ngày, chi tiêu, tin nhắn, CPA.">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Pinned library versions (avoid breaking changes from @latest) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js" defer></script>
+  <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js" defer></script>
+
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Top loading bar (shown while syncing) -->
+  <div id="topProgress" class="top-progress" aria-hidden="true"></div>
+
+  <!-- Ambient background glow -->
+  <div class="bg-glow glow-1"></div>
+  <div class="bg-glow glow-2"></div>
+
+  <div class="app-layout">
+
+    <!-- ============ HEADER ============ -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="brand-logo">
+          <div class="logo-icon">
+            <svg viewBox="0 0 36 36" fill="currentColor" aria-hidden="true">
+              <path d="M18 2C9.163 2 2 9.163 2 18c0 7.98 5.86 14.588 13.5 15.77V22.625h-4.063V18H15.5v-3.52c0-4.01 2.387-6.225 6.043-6.225 1.751 0 3.582.313 3.582.313v3.938h-2.018c-1.988 0-2.607 1.233-2.607 2.5V18h4.437l-.71 4.625h-3.727v11.145C28.14 32.588 34 25.98 34 18c0-8.837-7.163-16-16-16z"/>
+            </svg>
+          </div>
+          <div>
+            <h1 class="brand-title">Ucmas Ads Analytics</h1>
+            <p class="brand-subtitle">BM Ucmas Việt Nam • Meta Marketing API</p>
+          </div>
+        </div>
+
+        <div id="liveBadge" class="account-badge badge-idle">
+          <span class="badge-dot"></span>
+          <span id="liveBadgeText">Đang tải...</span>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <label for="accountSelect" class="visually-hidden">Chọn tài khoản</label>
+        <select id="accountSelect" class="custom-select account-select" title="Chọn tài khoản quảng cáo">
+          <option value="ALL">🏢 Toàn BM Ucmas Việt Nam</option>
+        </select>
+
+        <label for="productSelect" class="visually-hidden">Chọn sản phẩm</label>
+        <select id="productSelect" class="custom-select" title="Lọc theo sản phẩm">
+          <option value="ALL">📦 Tất cả 4 sản phẩm</option>
+          <option value="ucmas">UCMAS</option>
+          <option value="uckid">UCKID</option>
+          <option value="mathca">MATHCA</option>
+          <option value="traihe">TRẠI HÈ</option>
+        </select>
+
+        <label for="datePresetSelect" class="visually-hidden">Khoảng thời gian</label>
+        <select id="datePresetSelect" class="custom-select" title="Khoảng thời gian">
+          <option value="last_30d">30 ngày qua</option>
+          <option value="last_14d">14 ngày qua</option>
+          <option value="last_7d">7 ngày qua</option>
+          <option value="this_month">Tháng này</option>
+          <option value="yesterday">Hôm qua</option>
+          <option value="today">Hôm nay</option>
+        </select>
+
+        <button id="syncBtn" class="btn btn-primary" title="Đồng bộ dữ liệu mới nhất từ Meta">
+          <i data-lucide="refresh-cw" id="syncIcon"></i>
+          <span>Đồng bộ</span>
+        </button>
+
+        <button id="openConfigBtn" class="btn btn-icon" title="Cài đặt Token" aria-label="Cài đặt Token">
+          <i data-lucide="key-round"></i>
+        </button>
+
+        <div class="dropdown" id="exportDropdown">
+          <button id="exportDropdownBtn" class="btn btn-icon" title="Xuất dữ liệu" aria-label="Xuất dữ liệu">
+            <i data-lucide="download"></i>
+          </button>
+          <div id="exportMenu" class="dropdown-menu">
+            <a id="exportCampaignsLink" href="/api/export/campaigns" class="dropdown-item" download>
+              <i data-lucide="file-spreadsheet"></i> CSV Chiến dịch (Excel)
+            </a>
+            <a id="exportDailyLink" href="/api/export/daily" class="dropdown-item" download>
+              <i data-lucide="calendar"></i> CSV Theo ngày (Excel)
+            </a>
+            <a id="exportJsonLink" href="/api/export/json" class="dropdown-item" download>
+              <i data-lucide="file-code"></i> JSON dữ liệu gốc
+            </a>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="dashboard-body" id="dashboardBody">
+
+      <!-- Warnings / notices (API errors per account, missing token...) -->
+      <div id="noticeArea" class="notice-area"></div>
+
+      <!-- Empty state (no token / no data yet) -->
+      <section id="emptyState" class="empty-state d-none">
+        <i data-lucide="plug-zap" class="empty-icon"></i>
+        <h2 id="emptyTitle">Chưa kết nối Meta Ads</h2>
+        <p id="emptyDesc">Bấm "Cài đặt Token" để dán Access Token, sau đó đồng bộ dữ liệu.</p>
+        <button id="emptyActionBtn" class="btn btn-primary">Cài đặt Token</button>
+      </section>
+
+      <div id="reportContent" class="report-content">
+
+        <!-- ============ AI HERO ============ -->
+        <section class="ai-hero-card" id="aiHeroSection">
+          <div class="hero-left">
+            <div class="score-circle-container">
+              <svg class="score-circle-svg" viewBox="0 0 100 100" aria-hidden="true">
+                <circle class="score-circle-bg" cx="50" cy="50" r="42" />
+                <circle class="score-circle-progress" id="scoreCircleProgress" cx="50" cy="50" r="42" />
+              </svg>
+              <div class="score-number-box">
+                <span id="aiHealthScore" class="score-val">--</span>
+                <span class="score-sub">/ 100</span>
+              </div>
+            </div>
+            <div class="hero-text-block">
+              <div class="hero-header-row">
+                <h2 class="hero-title">Chẩn Đoán Tự Động</h2>
+                <span id="aiStatusPill" class="health-pill">Đang phân tích...</span>
+              </div>
+              <p id="aiExecutiveSummary" class="hero-desc">Đang quét CPA, CTR, tần suất của các chiến dịch...</p>
+              <p id="scopeLine" class="hero-scope"></p>
+            </div>
+          </div>
+
+          <div class="hero-right-highlights">
+            <div class="highlight-item tone-success">
+              <div class="highlight-icon"><i data-lucide="flame"></i></div>
+              <div>
+                <div class="highlight-count" id="winnerCount">0</div>
+                <div class="highlight-label">Chiến dịch tốt nên Scale</div>
+              </div>
+            </div>
+            <div class="highlight-item tone-danger">
+              <div class="highlight-icon"><i data-lucide="alert-triangle"></i></div>
+              <div>
+                <div class="highlight-count" id="wasterCount">0</div>
+                <div class="highlight-label">Chiến dịch cần rà soát</div>
+              </div>
+            </div>
+            <div class="highlight-item tone-warning">
+              <div class="highlight-icon"><i data-lucide="repeat"></i></div>
+              <div>
+                <div class="highlight-count" id="fatigueCount">0</div>
+                <div class="highlight-label">Bão hòa creative</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ KPI CARDS ============ -->
+        <section class="kpi-grid" aria-label="Chỉ số chính">
+          <div class="kpi-card kpi-highlight">
+            <div class="kpi-header">
+              <span class="kpi-title">Ngân sách dự kiến hôm nay</span>
+              <div class="kpi-icon tone-success"><i data-lucide="calendar-check"></i></div>
+            </div>
+            <div class="kpi-value text-success" id="kpiBudget">–</div>
+            <div class="kpi-footer">
+              <span class="kpi-sub" id="kpiBudgetSub">CBO + ABO đang chạy</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-header">
+              <span class="kpi-title">Đã chi hôm nay</span>
+              <div class="kpi-icon tone-primary"><i data-lucide="gauge"></i></div>
+            </div>
+            <div class="kpi-value" id="kpiTodaySpend">–</div>
+            <div class="progress-track" aria-hidden="true"><div class="progress-bar" id="kpiPacingBar"></div></div>
+            <div class="kpi-footer">
+              <span class="kpi-sub" id="kpiPacingText">Tiến độ giải ngân</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-header">
+              <span class="kpi-title">Tin nhắn hôm nay</span>
+              <div class="kpi-icon tone-pink"><i data-lucide="message-circle"></i></div>
+            </div>
+            <div class="kpi-value" id="kpiTodayMessages">–</div>
+            <div class="kpi-footer">
+              <span class="kpi-sub" id="kpiTodayCpa">Giá/tin hôm nay: –</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-header">
+              <span class="kpi-title">Tổng chi tiêu <span class="period-label"></span></span>
+              <div class="kpi-icon tone-cyan"><i data-lucide="wallet"></i></div>
+            </div>
+            <div class="kpi-value" id="kpiSpend">–</div>
+            <div class="kpi-footer">
+              <span class="kpi-sub" id="kpiCpm">CPM: –</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-header">
+              <span class="kpi-title">Tin nhắn <span class="period-label"></span></span>
+              <div class="kpi-icon tone-purple"><i data-lucide="messages-square"></i></div>
+            </div>
+            <div class="kpi-value" id="kpiMessages">–</div>
+            <div class="kpi-footer">
+              <span class="kpi-sub" id="kpiCpa">CPA: –</span>
+              <span class="kpi-badge" id="kpiCpaVerdict"></span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-header">
+              <span class="kpi-title">Tỷ lệ click (CTR)</span>
+              <div class="kpi-icon tone-warning"><i data-lucide="mouse-pointer-click"></i></div>
+            </div>
+            <div class="kpi-value" id="kpiCtr">–</div>
+            <div class="kpi-footer">
+              <span class="kpi-sub" id="kpiCpc">CPC: –</span>
+              <span class="kpi-sub" id="kpiClicks"></span>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 4 PRODUCTS ============ -->
+        <section class="products-section">
+          <div class="section-header">
+            <div class="section-title-wrap">
+              <i data-lucide="layers" class="section-title-icon"></i>
+              <h3 class="section-title">Hiệu quả 4 sản phẩm</h3>
+            </div>
+            <p class="section-desc">Phân loại theo tên chiến dịch giữa dấu <code>/</code> thứ 1 và thứ 2 (VD: <code>ten/ucmas/...</code>). Bấm vào thẻ để lọc nhanh.</p>
+          </div>
+          <div class="products-grid" id="productsGrid"></div>
+        </section>
+
+        <!-- ============ CHARTS ROW 1 ============ -->
+        <section class="charts-row">
+          <div class="chart-card">
+            <div class="chart-header">
+              <div>
+                <h3 class="chart-title">Chi tiêu & tin nhắn theo ngày</h3>
+                <p class="chart-subtitle">Cột: chi tiêu • Đường: số tin nhắn (di chuột để xem giá/tin)</p>
+              </div>
+            </div>
+            <div class="chart-canvas-container"><canvas id="dailyPerformanceChart"></canvas></div>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-header">
+              <div>
+                <h3 class="chart-title">Phễu chuyển đổi</h3>
+                <p class="chart-subtitle">Hiển thị → Click → Tin nhắn</p>
+              </div>
+            </div>
+            <div class="funnel-container" id="funnelVisual"></div>
+          </div>
+        </section>
+
+        <!-- ============ CHARTS ROW 2 ============ -->
+        <section class="charts-row">
+          <div class="chart-card">
+            <div class="chart-header">
+              <div>
+                <h3 class="chart-title">Top 8 chiến dịch chi tiêu cao nhất</h3>
+                <p class="chart-subtitle">Màu theo sản phẩm • di chuột để xem tin nhắn và CPA</p>
+              </div>
+            </div>
+            <div class="chart-canvas-container"><canvas id="campaignComparisonChart"></canvas></div>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-header">
+              <div>
+                <h3 class="chart-title">Phân bổ chi tiêu theo nền tảng</h3>
+                <p class="chart-subtitle">Dữ liệu thật từ breakdown <code>publisher_platform</code></p>
+              </div>
+            </div>
+            <div class="chart-canvas-container"><canvas id="placementDoughnutChart"></canvas></div>
+          </div>
+        </section>
+
+        <!-- ============ RECOMMENDATIONS ============ -->
+        <section class="recommendations-section">
+          <div class="section-header">
+            <div class="section-title-wrap">
+              <i data-lucide="bot" class="section-title-icon"></i>
+              <h3 class="section-title">Khuyến nghị hành động</h3>
+            </div>
+            <p class="section-desc">Tổng hợp tự động theo ngưỡng CPA / tần suất (chỉ chiến dịch đang chạy)</p>
+          </div>
+          <div class="insight-list" id="insightList"></div>
+          <div class="recommendations-grid" id="recommendationsGrid"></div>
+        </section>
+
+        <!-- ============ CAMPAIGN TABLE ============ -->
+        <section class="table-section">
+          <div class="table-header">
+            <div class="table-title-group">
+              <h3 class="section-title">Danh sách chiến dịch</h3>
+              <span class="count-badge" id="campaignCountBadge">0 chiến dịch</span>
+            </div>
+            <div class="table-controls">
+              <div class="search-input-wrap">
+                <i data-lucide="search" class="search-icon"></i>
+                <label for="tableSearchInput" class="visually-hidden">Tìm chiến dịch</label>
+                <input type="text" id="tableSearchInput" placeholder="Tìm tên, ID, tài khoản...">
+              </div>
+              <label for="statusFilterSelect" class="visually-hidden">Lọc trạng thái</label>
+              <select id="statusFilterSelect" class="custom-select custom-select-sm">
+                <option value="ALL">Tất cả trạng thái</option>
+                <option value="ACTIVE" selected>Đang chạy</option>
+                <option value="INACTIVE">Không chạy</option>
+                <option value="SPENT">Có chi tiêu trong kỳ</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="campaignsDataTable">
+              <thead>
+                <tr>
+                  <th data-sort="name" id="thName">Chiến dịch</th>
+                  <th data-sort="productLabel" id="thProduct">Sản phẩm</th>
+                  <th data-sort="accountName" id="thAccount">Tài khoản</th>
+                  <th data-sort="effective_status" id="thStatus">Trạng thái</th>
+                  <th data-sort="expectedDailyBudget" id="thBudget" class="text-right">NS/ngày</th>
+                  <th data-sort="todaySpend" id="thToday" class="text-right">Chi hôm nay</th>
+                  <th data-sort="spend" id="thSpend" class="text-right">Chi tiêu kỳ</th>
+                  <th data-sort="messages" id="thMessages" class="text-right">Tin nhắn</th>
+                  <th data-sort="cpa" id="thCpa" class="text-right">Giá/tin</th>
+                  <th data-sort="ctr" id="thCtr" class="text-right">CTR</th>
+                  <th data-sort="recommendation" id="thEval" class="text-center">Đánh giá</th>
+                </tr>
+              </thead>
+              <tbody id="campaignsTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="app-footer">
+      <div id="footerInfo">Meta Graph API • BM Ucmas Việt Nam</div>
+      <div class="footer-links">
+        <a id="tokenGuideLink" href="/docs/huong-dan-token" target="_blank" rel="noopener">Hướng dẫn lấy Token</a>
+        <span>•</span>
+        <a id="metaDocsLink" href="https://developers.facebook.com/docs/marketing-apis" target="_blank" rel="noopener">Meta Marketing API Docs</a>
+      </div>
+    </footer>
+  </div>
+
+  <!-- ============ TOKEN MODAL ============ -->
+  <div id="configModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="configModalTitle">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-icon"><i data-lucide="sliders"></i></div>
+          <h3 class="modal-title" id="configModalTitle">Kết nối Meta Marketing API</h3>
+        </div>
+        <button id="closeConfigModalBtn" class="btn-close" aria-label="Đóng">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <p class="modal-intro">Token được lưu vào file <code>.env</code> trên máy này (chỉ cập nhật đúng dòng token, không ảnh hưởng cấu hình khác).</p>
+
+        <form id="configForm">
+          <div class="form-group">
+            <label for="cfgToken">Meta Access Token <span class="required">*</span></label>
+            <textarea id="cfgToken" class="form-control" rows="3" placeholder="EAA..." required></textarea>
+            <small class="form-help">Quyền tối thiểu: <code>ads_read</code>, <code>read_insights</code>, <code>business_management</code></small>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="cfgAppId">Meta App ID <span class="optional">(tùy chọn)</span></label>
+              <input type="text" id="cfgAppId" class="form-control" placeholder="ID ứng dụng">
+            </div>
+            <div class="form-group">
+              <label for="cfgAppSecret">App Secret <span class="optional">(tùy chọn)</span></label>
+              <input type="password" id="cfgAppSecret" class="form-control" placeholder="Khóa bí mật" autocomplete="off">
+            </div>
+          </div>
+
+          <div id="configAlertBox" class="alert-box d-none"></div>
+
+          <div class="modal-footer">
+            <button type="button" id="cancelConfigBtn" class="btn btn-secondary">Đóng</button>
+            <button type="submit" id="saveConfigBtn" class="btn btn-primary">
+              <i data-lucide="check"></i> Lưu & Đồng bộ
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notifications -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <script src="js/app.js" defer></script>
+</body>
+</html>
