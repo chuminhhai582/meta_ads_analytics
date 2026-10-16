@@ -4,7 +4,7 @@
 > Đọc file này TRƯỚC khi sửa bất kỳ dòng code nào. Quy tắc làm việc bắt buộc nằm ở
 > [`.agents/rules/quy-tac-du-an.md`](./.agents/rules/quy-tac-du-an.md).
 >
-> Cập nhật lần cuối: 2026-10-15
+> Cập nhật lần cuối: 2026-10-16
 
 ---
 
@@ -26,7 +26,7 @@ Mô hình kinh doanh: **giáo dục (toán tư duy cho trẻ em)**. Chuyển đ�
 
 | # | Ràng buộc | Giá trị |
 |---|-----------|---------|
-| 1 | Business Manager duy nhất | **BM ID `2590933284556026`** ("Ucmas Việt Nam") — 10 tài khoản quảng cáo owned |
+| 1 | Business Manager duy nhất | **BM ID `2590933284556026`** ("Ucmas Việt Nam"). System User hiện tại truy cập được **9/10** tài khoản (thiếu TK 7 `act_878031747567840`) |
 | 2 | Meta App | App ID `1512128683054595` ("APP Test") |
 | 3 | Sản phẩm được hiển thị & phân tích | **Chỉ 4 sản phẩm: UCMAS, UCKID, MATHCA, TRẠI HÈ** |
 | 4 | Quy tắc nhận diện sản phẩm | Lấy đoạn text **giữa dấu `/` thứ 1 và thứ 2** trong tên chiến dịch. VD: `hai/ucmas/mess/khaigiang` → `ucmas` |
@@ -60,9 +60,19 @@ Nếu chiến dịch không chạy → 0
 
 Tổng hợp lên: chiến dịch → sản phẩm (`products[i].expectedDailyBudget`) → toàn bộ (`summary.expectedDailyBudget`).
 
-### 2.3 Chỉ số chuyển đổi chính (`extractMessages()`)
+### 2.3 Chỉ số chuyển đổi chính (`extractConversions()`)
 
-Ưu tiên theo thứ tự: `onsite_conversion.messaging_conversation_started_7d` → `onsite_conversion.total_messaging_connection` → `lead` → `purchase`. Giá trị này được lưu vào trường `messages` (số tin nhắn / lead).
+Trả về **hai trường tách biệt**, không gộp:
+
+| Trường | Lấy từ action_type |
+|---|---|
+| `messages` | `onsite_conversion.messaging_conversation_started_7d`, dự phòng `onsite_conversion.total_messaging_connection` |
+| `otherConversions` | `lead` / `onsite_conversion.lead` / `purchase` / `omni_purchase` |
+
+⚠️ **CPA chỉ tính trên `messages`.** Trước 16/10/2026 hàm này gộp cả bốn loại vào một số
+(`messages || connections || leads || purchases`), khiến chiến dịch 0 tin nhắn nhưng có
+50 đơn hàng bị báo thành "50 tin nhắn" — CPA của các chiến dịch đo những thứ khác nhau
+mà vẫn cộng chung.
 
 ---
 
@@ -71,7 +81,7 @@ Tổng hợp lên: chiến dịch → sản phẩm (`products[i].expectedDailyBu
 ```mermaid
 flowchart LR
     A["Meta Graph API v21.0"] -->|"owned_ad_accounts, campaigns, adsets, insights (phân trang đầy đủ)"| B["src/meta-api.js (fetchRawReport)"]
-    B -->|"raw report (v2)"| C["src/report.js (buildView)"]
+    B -->|"raw report v4 (coverage + adMap)"| C["src/report.js (buildView)"]
     C -->|"view 4 sản phẩm"| D["src/export-csv.js"]
     D --> E["data/latest_insights.json + CSV"]
     C --> F["src/server.js (Express)"]
@@ -80,10 +90,9 @@ flowchart LR
     H --> I["public/index.html + css/style.css"]
 ```
 
-1. Server khởi động → đọc `data/latest_insights.json` (nếu có version: 2) vào bộ nhớ (`rawReport`).
-2. Người dùng bấm **Đồng bộ** → `POST /api/sync` → `fetchRawReport()` gọi Meta API duyệt hết `paging.next` cho 10 tài khoản → ghi lại file JSON/CSV → trả payload view + phân tích AI.
-3. Lọc theo **sản phẩm** được xử lý tức thì qua `GET /api/data?product=...` do server `buildView()` tính toán chính xác số liệu tổng hợp.
-4. Lọc theo **tài khoản** / **khoảng thời gian** → gọi lại `/api/sync`.
+1. Server khởi động → đọc `data/latest_insights.json` (schema v2-v4) vào bộ nhớ (`rawReport`).
+2. Người dùng bấm **Đồng bộ** → `POST /api/sync` → `planSync()` quyết định kéo toàn bộ hay chỉ phần mới → `fetchRawReport()` gọi Meta API (chia theo tháng, phân trang đầy đủ) → gộp với kho cũ → ghi JSON/CSV → trả payload view + phân tích.
+3. Lọc theo **sản phẩm / tài khoản / khoảng thời gian** đều xử lý 100% local qua `GET /api/data` — `buildView()` cắt lát kho dữ liệu trong ~4ms, KHÔNG gọi lại Meta API.
 
 ---
 
@@ -97,9 +106,8 @@ Local_phantich_ads/
 │       ├── plugin.json
 │       ├── mcp_config.json           # Trỏ tới mcp-launcher.js
 │       └── skills/meta-ads/SKILL.md
-├── backup_2026-10-15/                # Bản sao lưu an toàn trước khi tối ưu
 ├── data/                             # Dữ liệu sinh tự động (gitignored)
-│   ├── latest_insights.json          # Snapshot raw report v2
+│   ├── latest_insights.json          # Snapshot raw report v4 (adMap + coverage)
 │   ├── campaigns.csv                 # Excel UTF-8 BOM
 │   └── daily_performance.csv
 ├── public/                           # Frontend tĩnh (served by Express)
@@ -112,7 +120,7 @@ Local_phantich_ads/
 │   ├── report.js                     # View builder lọc 4 sản phẩm & tổng hợp chỉ số
 │   ├── ai-analyst.js                 # Động cơ chẩn đoán rule-based chuẩn CPA tin nhắn
 │   ├── export-csv.js                 # Xuất CSV UTF-8 BOM & JSON
-│   └── server.js                     # Express server + REST API + OAuth
+│   └── server.js                     # Express server + REST API (chỉ loopback + token CSRF)
 ├── mcp-launcher.js                   # Khởi chạy @mikusnuz/meta-ads-mcp
 ├── .env                              # BÍ MẬT: token, app secret (gitignored)
 ├── .env.example                      # Mẫu biến môi trường
@@ -130,9 +138,12 @@ Local_phantich_ads/
 | `META_ADS_ACCESS_TOKEN` | ✅ | User/System User token, quyền `ads_read`, `read_insights` |
 | `META_AD_ACCOUNT_ID` | ⛔ (dùng cho MCP) | Tài khoản mặc định cho MCP server |
 | `META_BUSINESS_ID` | ⛔ | Mặc định `2590933284556026` |
-| `META_APP_ID` / `META_APP_SECRET` | ⛔ | Dùng cho OAuth `/auth/login` và đổi token 60 ngày |
+| `META_APP_ID` / `META_APP_SECRET` | ⛔ | Không dùng để lấy dữ liệu. Để trống được nếu dùng System User token hạn Never |
 | `META_API_VERSION` | ⛔ | Mặc định `v21.0` |
 | `PORT` | ⛔ | Mặc định `3000` |
+| `SYNC_START_DATE` | ⛔ | Mốc bắt đầu kho dữ liệu, mặc định `2026-01-01` |
+| `SYNC_RETRO_DAYS` | ⛔ | Số ngày luôn kéo lại mỗi lần đồng bộ, mặc định `7` |
+| `ALLOW_REMOTE` | ⛔ | `true` mới cho máy khác trong LAN truy cập. Mặc định `false` |
 
 ---
 
@@ -143,11 +154,19 @@ Local_phantich_ads/
 | GET | `/api/data?product=...` | Trả về view báo cáo theo sản phẩm (`ALL` hoặc key sản phẩm) + phân tích AI |
 | POST | `/api/sync` | Body `{ datePreset, accountId, productFilter }` → kéo dữ liệu mới từ Meta |
 | POST | `/api/save-config` | Lưu token/app vào `.env` (chỉ cập nhật đúng key được gửi) |
-| GET | `/api/export/:fileType` | `campaigns` \| `daily` \| `json` |
+| GET | `/api/session` | Trả token phiên (CSRF) cho trang cùng origin |
+| POST | `/api/sync-sheet` | Chỉ làm mới lead Google Sheet (~0,3s, không gọi Meta) |
+| GET | `/api/export/campaigns` \| `/daily` \| `/json` | Xuất CSV / JSON theo bộ lọc hiện tại |
 | GET | `/docs/huong-dan-token` | Tải tài liệu hướng dẫn lấy token dạng text UTF-8 |
-| GET | `/auth/login`, `/auth/callback` | OAuth Facebook |
 
-`datePreset` hợp lệ: `last_30d`, `last_7d`, `last_14d`, `this_month`, `today`, `yesterday`.
+> Không có route `/auth/*` — ứng dụng không dùng OAuth, chỉ dán token thủ công.
+
+**Bảo mật:** không gửi header CORS; chỉ nhận kết nối loopback (trừ khi `ALLOW_REMOTE=true`);
+mọi route **ghi** đòi header `X-Internal-Token` lấy từ `GET /api/session`.
+
+`datePreset` hợp lệ (hằng `DATE_PRESETS` trong `src/report.js`):
+`today`, `yesterday`, `last_7d`, `last_14d`, `last_30d`, `last_90d`,
+`this_month`, `last_month`, `this_quarter`, `this_year`.
 
 ---
 
@@ -218,7 +237,33 @@ Chạy `npm test` trước khi commit bất kỳ thay đổi nào trong `src/rep
 | Phiên bản | Khác biệt |
 |---|---|
 | v2 | Không có `adMap`. Vẫn đọc được, nhưng mọi lead vào `unassignedLeads` + hiện cảnh báo cần đồng bộ lại. |
-| **v3** | Có `adMap` (`adId → campaignId`) và `syncWindow`. `dailyRecords` có thêm `reach`, `otherConversions`. |
+| v3 | Có `adMap` (`adId → campaignId`). `dailyRecords` có thêm `reach`, `otherConversions`. |
+| **v4** | Có `coverage {since, until}` → đồng bộ gia tăng. `placementRecords` có `month`. Chiến dịch KHÔNG còn mang số tổng (mọi chỉ số tính lại từ `dailyRecords`). `frequency` là của **30 ngày gần nhất**, độc lập với `coverage`. |
+
+### Kho dữ liệu & đồng bộ gia tăng (từ 16/10/2026)
+
+| | |
+|---|---|
+| Phạm vi | `SYNC_START_DATE` (mặc định `2026-01-01`) → hôm nay |
+| Lần đầu | Kéo toàn bộ. Đo thực tế: **6.471 dòng / 9 tài khoản / 55,9 giây** |
+| Các lần sau | Chỉ kéo từ `coverage.until − SYNC_RETRO_DAYS + 1` → hôm nay. Đo thực tế: **~10 giây** |
+| Ép kéo lại tất cả | `npm run fetch -- --full` |
+
+**Vì sao phải lùi lại `SYNC_RETRO_DAYS` (mặc định 7) chứ không chỉ lấy ngày mới:**
+Meta dùng cửa sổ quy kết 7 ngày, nên số liệu của những ngày vừa qua còn được bổ sung
+sau khi đã ghi nhận. Chỉ lấy ngày mới sẽ bỏ sót phần thay đổi đó.
+
+**Gộp dữ liệu:** `mergeByDate()` giữ nguyên bản ghi TRƯỚC mốc kéo lại và **thay thế**
+(không cộng dồn) toàn bộ từ mốc đó trở đi — vì Meta có thể sửa lại số của ngày đã qua.
+
+**Chia theo tháng:** `monthChunks()` cắt khoảng cần kéo thành từng tháng. Đo thực tế trên
+BM này: kéo cả năm trong 1 request = 3.593 dòng / 110,6s (~32 dòng/s, 8 trang); chia theo
+tháng = ~56 dòng/s, mỗi tháng gọn trong 1 trang. Nhanh hơn **1,7×** và tránh request quá
+lớn bị Meta từ chối.
+
+**Lead từ Google Sheet:** `fetchGoogleSheetLeads()` luôn tải lại TOÀN BỘ CSV và dựng lại
+mọi lead từ đầu — nên các trường được cập nhật trên lead cũ (ngày L2/L3/L4, học phí) đều
+được ghi nhận, không chỉ lead mới tạo.
 
 ---
 
@@ -314,6 +359,7 @@ Báo cáo đầy đủ kèm số đo kiểm chứng: [`BAO_CAO_RA_SOAT_2026-10-1
 | 2026-10-15 | **Tối ưu toàn diện hệ thống (Đã duyệt)**: Phân trang API (quét đủ 618 CĐ), xoá demo/fake data, thay thế KPI e-commerce bằng tin nhắn/pacing thực tế, đồng nhất UI/UX Dark Glassmorphism, chuẩn hoá schema v2. |
 | 2026-10-15 | **Nâng cấp Local Data Lake (Offline-First - Đã duyệt)**: Tách triệt để lớp lưu trữ hạt lựu (`dailyRecords`, `placementRecords`) và lớp biểu diễn (`buildView`). Chuyển toàn bộ lọc tài khoản / ngày / sản phẩm sang xử lý local tức thì (< 2ms), chống Rate Limit Meta, trải nghiệm mượt mà tuyệt đối. |
 | 2026-10-15 | **Tích hợp Google Sheet & 5 Tab Chuyên Sâu (Đã duyệt)**: Xây dựng module `src/google-sheet.js`, đo lường phễu tuyển sinh 6 tầng L1-L4, ghi nhận doanh thu học phí & CAC thực tế, chia 5 tab chuyên sâu cho từng sản phẩm. |
+| 2026-10-16 | **Kho dữ liệu cả năm 2026 + đồng bộ gia tăng (Đã duyệt)**: snapshot v4 với coverage; lần đầu kéo 6.471 dòng/55,9s, các lần sau ~10s; chia request theo tháng (nhanh hơn 1,7x); placements có chiều thời gian; thêm các kỳ 90 ngày / tháng trước / quý này / cả năm; frequency chuyển sang cửa sổ cố định 30 ngày. |
 | 2026-10-16 | **Rà soát toàn hệ thống & sửa 31 phát hiện (Đã duyệt)**: ghép lead đúng qua `adMap` (schema v3), bỏ chia lead theo tỉ lệ chi tiêu, lọc lead theo kỳ & tài khoản, khoá bất biến Σdòng = tổng KPI bằng 29 test; chặn CORS `*` + chỉ cho loopback + token CSRF; ngừng gửi SĐT thật về client; sửa 3 link export hỏng; payload 883→428 KB, `buildView` 17,4→1,40 ms. |
 | 2026-10-15 | **Bổ sung cột SĐT (L1), L3, L4, Doanh thu và Chi tiêu nền tảng vào danh sách chiến dịch**: Tích hợp dữ liệu phễu tuyển sinh và phân rã chi tiêu Facebook, Instagram, Messenger, Audience Network chi tiết cho từng hàng chiến dịch kèm chức năng sắp xếp linh hoạt. |
 

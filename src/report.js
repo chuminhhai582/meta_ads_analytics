@@ -17,8 +17,11 @@
  * Invariant enforced here and covered by test/report.test.js:
  *  summary.<L1..L4|revenue> === Σ(campaigns shown) + unassignedLeads.<same field>
  */
-import { TARGET_PRODUCTS, TARGET_KEYS } from './meta-api.js';
+import { TARGET_PRODUCTS, TARGET_KEYS, getVietnamDateString } from './meta-api.js';
 import { leadInRange, emptyFunnel, addLeadToFunnel, withFunnelRates } from './google-sheet.js';
+
+// Giữ lại đường import cũ cho test và các module khác.
+export { getVietnamDateString };
 
 export const PLATFORM_LABELS = {
   facebook: 'Facebook',
@@ -31,18 +34,6 @@ export const PLATFORM_LABELS = {
 
 const round = (n) => Math.round(n || 0);
 const ratio = (a, b, digits = 2) => (b > 0 ? parseFloat(((a / b) * 100).toFixed(digits)) : 0);
-
-/**
- * Get YYYY-MM-DD in Vietnam timezone (Asia/Ho_Chi_Minh - GMT+7).
- */
-export function getVietnamDateString(d = new Date()) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Ho_Chi_Minh',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).format(d);
-}
 
 /**
  * Compute { startDate, endDate, todayStr, yesterdayStr } for a preset in Vietnam time.
@@ -59,6 +50,9 @@ export function getDateRange(preset = 'last_30d', refDate = new Date()) {
   };
 
   const yesterdayStr = addDays(-1);
+  const pad = (n) => String(n).padStart(2, '0');
+  /** Ngày cuối cùng của tháng (y, m) — m tính từ 1. */
+  const lastDayOf = (yy, mm) => new Date(Date.UTC(yy, mm, 0)).getUTCDate();
 
   let startDate = addDays(-29);
   let endDate = todayStr;
@@ -84,16 +78,44 @@ export function getDateRange(preset = 'last_30d', refDate = new Date()) {
       startDate = addDays(-29);
       endDate = todayStr;
       break;
-    case 'this_month': {
-      const monthStart = `${y}-${String(m).padStart(2, '0')}-01`;
-      startDate = monthStart;
+    case 'last_90d':
+      startDate = addDays(-89);
+      endDate = todayStr;
+      break;
+    case 'this_month':
+      startDate = `${y}-${pad(m)}-01`;
+      endDate = todayStr;
+      break;
+    case 'last_month': {
+      const pm = m === 1 ? 12 : m - 1;
+      const py = m === 1 ? y - 1 : y;
+      startDate = `${py}-${pad(pm)}-01`;
+      endDate = `${py}-${pad(pm)}-${pad(lastDayOf(py, pm))}`;
+      break;
+    }
+    case 'this_quarter': {
+      const qStartMonth = Math.floor((m - 1) / 3) * 3 + 1;
+      startDate = `${y}-${pad(qStartMonth)}-01`;
       endDate = todayStr;
       break;
     }
+    case 'this_year':
+      startDate = `${y}-01-01`;
+      endDate = todayStr;
+      break;
   }
 
   return { startDate, endDate, todayStr, yesterdayStr };
 }
+
+/** Các khoảng thời gian hợp lệ — dùng chung cho server, frontend và test. */
+export const DATE_PRESETS = [
+  'today', 'yesterday', 'last_7d', 'last_14d', 'last_30d',
+  'last_90d', 'this_month', 'last_month', 'this_quarter', 'this_year'
+];
+
+/** 'YYYY-MM-DD' → 'YYYY-MM' */
+export const monthOf = (dateStr) => String(dateStr || '').slice(0, 7);
 
 /** Sum metrics of a campaign list into one stats object. */
 function aggregate(campaigns) {
@@ -294,10 +316,13 @@ export function buildView(raw, options = {}) {
     }
   }
 
-  // 1.5. Index placement spend per campaign
+  // 1.5. Index placement spend per campaign (cũng lọc theo tháng như biểu đồ nền tảng)
   const campPlacementsMap = new Map();
+  const startMonthIdx = monthOf(startDate);
+  const endMonthIdx = monthOf(endDate);
   for (const p of placementRecords) {
     if (selectedAccount !== 'ALL' && p.accountId !== selectedAccount) continue;
+    if (p.month && (p.month < startMonthIdx || p.month > endMonthIdx)) continue;
     const cur = campPlacementsMap.get(p.campaignId) || {
       fbSpend: 0,
       igSpend: 0,
@@ -329,12 +354,10 @@ export function buildView(raw, options = {}) {
   const allFilteredCampaigns = rawCampaignsList
     .filter(c => selectedAccount === 'ALL' || c.accountId === selectedAccount)
     .map(c => {
-      const agg = hasDaily
-        ? (campAggMap.get(c.id) || { spend: 0, messages: 0, otherConversions: 0, impressions: 0, clicks: 0 })
-        : c;
-      const t = hasDaily
-        ? (campTodayMap.get(c.id) || { spend: 0, messages: 0 })
-        : { spend: c.todaySpend || 0, messages: c.todayMessages || 0 };
+      // Từ schema v4, chiến dịch KHÔNG còn mang số tổng sẵn — mọi chỉ số đều được
+      // tính lại từ dailyRecords theo đúng khoảng thời gian đang xem.
+      const agg = campAggMap.get(c.id) || { spend: 0, messages: 0, otherConversions: 0, impressions: 0, clicks: 0 };
+      const t = campTodayMap.get(c.id) || { spend: 0, messages: 0 };
 
       const spend = agg.spend || 0;
       const messages = agg.messages || 0;
@@ -448,6 +471,9 @@ export function buildView(raw, options = {}) {
   const placementMap = new Map();
   for (const p of placementRecords) {
     if (selectedAccount !== 'ALL' && p.accountId !== selectedAccount) continue;
+    // Phân bổ nền tảng được Meta trả theo THÁNG, nên chỉ lọc được tới mức tháng.
+    // Bản ghi cũ (schema v3) không có `month` — vẫn nhận để không mất dữ liệu.
+    if (p.month && (p.month < startMonthIdx || p.month > endMonthIdx)) continue;
     const matchProd = selectedProduct === 'ALL' ? TARGET_KEYS.includes(p.product) : p.product === selectedProduct;
     if (!matchProd) continue;
 
@@ -485,7 +511,15 @@ export function buildView(raw, options = {}) {
 
   // Data-quality notes shown in the UI. These are facts about the snapshot, not estimates.
   const dataNotes = [];
-  const syncWindow = raw.syncWindow || raw.datePreset || 'last_30d';
+  // Khoảng thời gian kho dữ liệu THỰC SỰ chứa. Snapshot cũ (v2/v3) không có `coverage`,
+  // suy ngược từ chính các bản ghi ngày đang có.
+  const recordDates = dailyRecords.length
+    ? dailyRecords.reduce(
+        (acc, r) => ({ min: r.date < acc.min ? r.date : acc.min, max: r.date > acc.max ? r.date : acc.max }),
+        { min: dailyRecords[0].date, max: dailyRecords[0].date })
+    : null;
+  const coverage = raw.coverage || (recordDates ? { since: recordDates.min, until: recordDates.max } : null);
+
   if (!raw.adMap) {
     dataNotes.push({
       level: 'warning',
@@ -504,18 +538,23 @@ export function buildView(raw, options = {}) {
       message: 'Đang xem theo 1 tài khoản: lead chưa ghép được chiến dịch bị loại khỏi tổng, vì không xác định được thuộc tài khoản nào.'
     });
   }
-  if (datePreset !== syncWindow && (datePreset === 'this_month' || datePreset === 'last_30d')) {
+  // Cảnh báo khi người dùng chọn khoảng vượt ra ngoài vùng dữ liệu đã tải về.
+  if (coverage && startDate < coverage.since) {
     dataNotes.push({
-      level: 'info',
-      message: `Snapshot chỉ chứa dữ liệu kỳ "${syncWindow}". Khoảng đang chọn có thể vượt ra ngoài vùng dữ liệu đã tải.`
+      level: 'warning',
+      message: `Kho dữ liệu chỉ có từ ${coverage.since}, nhưng khoảng đang chọn bắt đầu từ ${startDate}. ` +
+               `Phần trước ${coverage.since} đang thiếu — số liệu hiển thị thấp hơn thực tế.`
     });
   }
 
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     fetchedAt: raw.fetchedAt,
     datePreset,
-    syncWindow,
+    coverage,
+    lastSync: raw.lastSync || null,
+    /** Tần suất luôn đo trên 30 ngày gần nhất, không phụ thuộc khoảng đang xem. */
+    frequencyWindow: raw.frequencyWindow || 'last_30d',
     dateRange: { startDate, endDate },
     activeTab,
     scope: { ...raw.scope, accountId: selectedAccount, name: scopeName },
@@ -524,8 +563,12 @@ export function buildView(raw, options = {}) {
     accountId: selectedAccount,
     products,
     tabBadges,
-    /** Frequency is only measured for the sync window, so fatigue is only judged there. */
-    fatigueApplicable: datePreset === syncWindow,
+    /**
+     * Tần suất giờ LUÔN là của 30 ngày gần nhất — một cửa sổ cố định, có nghĩa rõ ràng,
+     * nên quy tắc bão hoà creative luôn áp dụng được. Trước đây tần suất là của cả
+     * phạm vi đồng bộ nên phải khoá lại khi hai thứ lệch nhau.
+     */
+    fatigueApplicable: true,
     leadAttribution: {
       matched: leadAttr.matchedCount,
       unmatched: leadAttr.unmatchedCount,

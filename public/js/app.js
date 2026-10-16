@@ -42,12 +42,16 @@ const PRODUCT_COLORS = {
 };
 
 const PRESET_LABELS = {
-  last_30d: '(30 ngày qua)',
-  last_14d: '(14 ngày qua)',
-  last_7d: '(7 ngày qua)',
-  this_month: '(Tháng này)',
+  today: '(Hôm nay)',
   yesterday: '(Hôm qua)',
-  today: '(Hôm nay)'
+  last_7d: '(7 ngày qua)',
+  last_14d: '(14 ngày qua)',
+  last_30d: '(30 ngày qua)',
+  last_90d: '(90 ngày qua)',
+  this_month: '(Tháng này)',
+  last_month: '(Tháng trước)',
+  this_quarter: '(Quý này)',
+  this_year: '(Cả năm nay)'
 };
 
 const STATUS_TEXT = {
@@ -556,8 +560,11 @@ function updateHeaderAndBadges() {
     const bm = view.scope?.businessId || appState.businessId || '—';
     const api = appState.apiVersion || '—';
     const attr = view.leadAttribution || {};
+    const cov = view.coverage
+      ? `Kho dữ liệu ${view.coverage.since} → ${view.coverage.until}`
+      : 'Kho dữ liệu: chưa rõ phạm vi';
     footerInfo.textContent =
-      `BM Ucmas Việt Nam (${bm}) • Graph API ${api} • Google Sheets CRM • ` +
+      `BM Ucmas Việt Nam (${bm}) • Graph API ${api} • ${cov} • ` +
       `${view.summary.campaignCount} chiến dịch • ${formatNumber(attr.matched || 0)} lead đã ghép / ` +
       `${formatNumber(attr.unmatched || 0)} chưa ghép • Chế độ Offline-First`;
   }

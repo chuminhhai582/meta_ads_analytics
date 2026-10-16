@@ -11,8 +11,9 @@
  *
  * Only REAL data from Meta is returned. Nothing is simulated.
  */
-import { config } from './config.js';
+import { config, ROOT_DIR } from './config.js';
 
+const ROOT_DIR_FOR_CLI = ROOT_DIR;
 const BASE_URL = 'https://graph.facebook.com';
 const MAX_PAGES = 50;              // safety cap per paginated request
 const ACCOUNT_CONCURRENCY = 3;     // accounts processed in parallel (rate-limit friendly)
@@ -65,7 +66,11 @@ async function callGraphApi(endpoint, params = {}) {
   const url = new URL(`${BASE_URL}/${config.apiVersion}/${endpoint}`);
   url.searchParams.set('access_token', config.accessToken);
   for (const [key, val] of Object.entries(params)) {
-    if (val !== undefined && val !== null) url.searchParams.set(key, String(val));
+    if (val === undefined || val === null) continue;
+    // Các tham số dạng object của Meta (time_range, filtering...) phải là JSON.
+    // String({since,until}) cho ra "[object Object]" và Meta trả lỗi 100
+    // "param time_range must be non-empty".
+    url.searchParams.set(key, typeof val === 'object' ? JSON.stringify(val) : String(val));
   }
   return fetchJson(url.toString());
 }
@@ -95,6 +100,59 @@ async function callGraphApiAll(endpoint, params = {}) {
     pages++;
   }
   return { rows, truncated: Boolean(next) };
+}
+
+/**
+ * Cắt [since, until] thành các cửa sổ theo từng tháng.
+ *
+ * Kéo nguyên một năm trong 1 request vẫn chạy, nhưng đo thực tế trên BM này:
+ * cả năm = 3.593 dòng / 110,6s (~32 dòng/s, 8 trang), còn chia theo tháng
+ * = ~56 dòng/s và mỗi tháng gọn trong 1 trang. Chia nhỏ vừa nhanh hơn vừa
+ * tránh request quá lớn bị Meta trả lỗi "reduce the amount of data".
+ */
+export function monthChunks(since, until) {
+  const chunks = [];
+  if (!since || !until || since > until) return chunks;
+
+  const pad = (n) => String(n).padStart(2, '0');
+  let [y, m] = since.split('-').map(Number);
+
+  while (true) {
+    const monthStart = `${y}-${pad(m)}-01`;
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const monthEnd = `${y}-${pad(m)}-${pad(lastDay)}`;
+
+    chunks.push({
+      since: monthStart < since ? since : monthStart,
+      until: monthEnd > until ? until : monthEnd
+    });
+
+    if (monthEnd >= until) break;
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return chunks;
+}
+
+/**
+ * Ngày YYYY-MM-DD theo giờ Việt Nam (Asia/Ho_Chi_Minh, GMT+7).
+ * Đặt ở đây chứ không ở report.js vì report.js đã import từ module này —
+ * để ngược lại sẽ thành phụ thuộc vòng.
+ */
+export function getVietnamDateString(d = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(d);
+}
+
+/** Cộng `days` vào một chuỗi YYYY-MM-DD. */
+export function addDaysTo(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d) + days * 86400000);
+  return next.toISOString().split('T')[0];
 }
 
 /** Run async fn over items with limited concurrency, preserving order. */
@@ -191,7 +249,7 @@ export async function getUserAdAccounts() {
  * Fetch everything for ONE ad account, in parallel. Each step fails independently
  * and is reported in `warnings` so one broken call never hides the other data.
  */
-async function fetchAccountData(acc, datePreset) {
+async function fetchAccountData(acc, { since, until, onProgress }) {
   const ep = `act_${acc.numericId}`;
   const warnings = [];
   const safe = async (step, promise) => {
@@ -205,8 +263,9 @@ async function fetchAccountData(acc, datePreset) {
     }
   };
 
-  const insightFields = 'campaign_id,spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,actions';
-  const [campaigns, adsets, ads, insights, daily, placements] = await Promise.all([
+  const chunks = monthChunks(since, until);
+
+  const [campaigns, adsets, ads, recent, placements] = await Promise.all([
     safe('campaigns', callGraphApiAll(`${ep}/campaigns`, {
       fields: 'id,name,status,effective_status,objective,daily_budget,lifetime_budget,start_time', limit: 200
     })),
@@ -219,26 +278,39 @@ async function fetchAccountData(acc, datePreset) {
     safe('ads', callGraphApiAll(`${ep}/ads`, {
       fields: 'id,campaign_id', limit: 500
     })),
-    safe('insights', callGraphApiAll(`${ep}/insights`, {
-      level: 'campaign', date_preset: datePreset, fields: insightFields, limit: 500
+    // Tần suất/reach CHỈ lấy cho cửa sổ 30 ngày gần nhất, không theo phạm vi kho dữ liệu.
+    // Frequency của cả một năm vô nghĩa với việc phát hiện bão hoà creative, và reach
+    // đã loại trùng nên không cộng hay chia nhỏ lại được.
+    safe('insights_recent', callGraphApiAll(`${ep}/insights`, {
+      level: 'campaign', date_preset: 'last_30d',
+      fields: 'campaign_id,reach,frequency,cpc,cpm', limit: 500
     })),
-    // Granular per-day rows. Today's figures are derived from these, so the separate
-    // date_preset=today call this module used to make was pure duplication.
-    safe('insights_daily', callGraphApiAll(`${ep}/insights`, {
-      level: 'campaign', date_preset: datePreset, time_increment: 1,
-      fields: 'campaign_id,date_start,spend,impressions,reach,clicks,actions', limit: 500
-    })),
+    // Phân bổ nền tảng theo THÁNG để lọc được theo khoảng thời gian. Lấy theo ngày sẽ
+    // nở ra gấp ~30 lần mà biểu đồ cũng không dùng tới mức chi tiết đó.
     safe('insights_placement', callGraphApiAll(`${ep}/insights`, {
-      level: 'campaign', date_preset: datePreset, breakdowns: 'publisher_platform',
-      fields: 'campaign_id,spend,impressions', limit: 500
+      level: 'campaign', time_range: { since, until }, time_increment: 'monthly',
+      breakdowns: 'publisher_platform',
+      fields: 'campaign_id,date_start,spend,impressions', limit: 500
     }))
   ]);
 
-  return { acc, campaigns, adsets, ads, insights, daily, placements, warnings };
+  // Số liệu theo ngày — chia theo tháng, chạy tuần tự để không dồn quá nhiều
+  // request song song lên cùng một tài khoản (dễ dính rate limit).
+  const daily = [];
+  for (const c of chunks) {
+    const rows = await safe(`insights_daily ${c.since.slice(0, 7)}`, callGraphApiAll(`${ep}/insights`, {
+      level: 'campaign', time_range: { since: c.since, until: c.until }, time_increment: 1,
+      fields: 'campaign_id,date_start,spend,impressions,reach,clicks,actions', limit: 500
+    }));
+    daily.push(...rows);
+    if (onProgress) onProgress(acc, c, rows.length);
+  }
+
+  return { acc, campaigns, adsets, ads, recent, daily, placements, warnings };
 }
 
 /** Merge one account's raw API rows into normalized campaign objects + aggregates. */
-function normalizeAccount({ acc, campaigns, adsets, ads, insights, daily, placements }) {
+function normalizeAccount({ acc, campaigns, adsets, ads, recent, daily, placements }) {
   // ABO budget: sum daily_budget of ad sets that are REALLY delivering
   const aboBudget = new Map();
   for (const a of adsets) {
@@ -246,16 +318,14 @@ function normalizeAccount({ acc, campaigns, adsets, ads, insights, daily, placem
       aboBudget.set(a.campaign_id, (aboBudget.get(a.campaign_id) || 0) + (parseInt(a.daily_budget, 10) || 0));
     }
   }
-  const insMap = new Map(insights.map(i => [i.campaign_id, i]));
+  const recentMap = new Map(recent.map(i => [i.campaign_id, i]));
 
   const productOf = new Map();
   const result = campaigns.map(camp => {
-    const ins = insMap.get(camp.id) || {};
+    const r = recentMap.get(camp.id) || {};
     const prod = detectProduct(camp.name);
     productOf.set(camp.id, prod.key);
 
-    const spend = parseFloat(ins.spend || 0);
-    const { messages, otherConversions } = extractConversions(ins.actions);
     const isRunning = camp.effective_status === 'ACTIVE';
     const cbo = parseInt(camp.daily_budget, 10) || 0;
     const expectedDailyBudget = isRunning ? (cbo > 0 ? cbo : (aboBudget.get(camp.id) || 0)) : 0;
@@ -272,20 +342,12 @@ function normalizeAccount({ acc, campaigns, adsets, ads, insights, daily, placem
       objective: camp.objective,
       budgetType: cbo > 0 ? 'CBO' : 'ABO',
       expectedDailyBudget,
-      spend,
-      impressions: parseInt(ins.impressions || 0, 10),
-      reach: parseInt(ins.reach || 0, 10),
-      clicks: parseInt(ins.clicks || 0, 10),
-      ctr: parseFloat(ins.ctr || 0),
-      cpc: parseFloat(ins.cpc || 0),
-      cpm: parseFloat(ins.cpm || 0),
-      // Frequency of the SYNC WINDOW only (impressions/reach cannot be re-derived for a
-      // shorter range, because reach is de-duplicated). report.js therefore only lets the
-      // fatigue rule fire when the view's range equals this window.
-      frequency: parseFloat(ins.frequency || 0),
-      messages,
-      otherConversions,
-      cpa: messages > 0 ? Math.round(spend / messages) : 0
+      // Chi tiêu / tin nhắn / hiển thị / click đều do report.js tính lại từ dailyRecords
+      // theo đúng khoảng thời gian đang xem, nên không lưu bản tổng ở đây nữa.
+      reach30d: parseInt(r.reach || 0, 10),
+      // Tần suất của 30 NGÀY GẦN NHẤT, không phải của phạm vi kho dữ liệu.
+      // Đây là cửa sổ duy nhất mà chỉ số này có ý nghĩa để phát hiện bão hoà creative.
+      frequency: parseFloat(r.frequency || 0)
     };
   });
 
@@ -317,6 +379,8 @@ function normalizeAccount({ acc, campaigns, adsets, ads, insights, daily, placem
     accountId: acc.numericId,
     product: productOf.get(p.campaign_id) || 'khac',
     platform: p.publisher_platform || 'unknown',
+    // Gom theo tháng (YYYY-MM) để report.js lọc được theo khoảng thời gian đang chọn.
+    month: String(p.date_start || '').slice(0, 7),
     spend: parseFloat(p.spend || 0),
     impressions: parseInt(p.impressions || 0, 10)
   }));
@@ -352,10 +416,18 @@ function groupPlacements(rows) {
  * Full sync for the whole BM (accountId = 'ALL') or one account.
  * Returns the RAW report (format version 2) — see PROJECT_CONTEXT.md §7.
  */
-export async function fetchRawReport(accountId = 'ALL', datePreset = 'last_30d') {
+export async function fetchRawReport(accountId = 'ALL', options = {}) {
   if (!config.hasToken()) {
     throw new Error('Chưa cấu hình Access Token. Vui lòng bấm "Cài đặt Token".');
   }
+
+  const previous = options.previous || null;
+  const todayStr = getVietnamDateString();
+  const targetSince = options.since || config.syncStartDate;
+  const targetUntil = options.until || todayStr;
+
+  // Quyết định kéo toàn bộ hay chỉ phần mới.
+  const plan = planSync(previous, targetSince, targetUntil);
 
   const bmAccounts = await getUserAdAccounts();
   if (bmAccounts.length === 0) {
@@ -368,38 +440,65 @@ export async function fetchRawReport(accountId = 'ALL', datePreset = 'last_30d')
     throw new Error(`Tài khoản ${accountId} không thuộc BM ${config.businessId}.`);
   }
 
-  console.log(`[Meta Ads API] Đang quét ${targets.length} tài khoản thuộc BM ${config.businessId} (${datePreset})...`);
-  const started = Date.now();
-  const accountResults = await mapWithConcurrency(targets, ACCOUNT_CONCURRENCY, acc => fetchAccountData(acc, datePreset));
+  const nMonths = monthChunks(plan.fetchSince, plan.fetchUntil).length;
+  console.log(
+    `[Meta Ads API] ${plan.mode === 'full' ? 'Kéo TOÀN BỘ' : 'Cập nhật phần mới'}: ` +
+    `${plan.fetchSince} → ${plan.fetchUntil} (${nMonths} tháng) × ${targets.length} tài khoản...`
+  );
+  if (plan.mode === 'full' && nMonths > 2) {
+    console.log(`[Meta Ads API] Lần đầu kéo nhiều dữ liệu, có thể mất vài phút. Các lần sau sẽ nhanh.`);
+  }
 
-  const campaigns = [], dailyRows = [], placementRows = [], warnings = [];
+  const started = Date.now();
+  let done = 0;
+  const onProgress = (acc, chunk) => {
+    done += 1;
+    process.stdout.write(`\r  ...${done}/${targets.length * nMonths} khối (${acc.name} ${chunk.since.slice(0, 7)})     `);
+  };
+
+  const accountResults = await mapWithConcurrency(targets, ACCOUNT_CONCURRENCY,
+    acc => fetchAccountData(acc, { since: plan.fetchSince, until: plan.fetchUntil, onProgress }));
+  process.stdout.write('\r' + ' '.repeat(70) + '\r');
+
+  const campaigns = [], freshDaily = [], freshPlacements = [], warnings = [];
   const adMap = {};
   for (const res of accountResults) {
     const n = normalizeAccount(res);
     campaigns.push(...n.campaigns);
-    dailyRows.push(...n.dailyRows);
-    placementRows.push(...n.placementRows);
+    freshDaily.push(...n.dailyRows);
+    freshPlacements.push(...n.placementRows);
     Object.assign(adMap, n.adMap);
     warnings.push(...res.warnings);
   }
+
+  // Gộp với dữ liệu cũ: giữ phần trước `fetchSince`, thay toàn bộ phần từ đó trở đi.
+  const dailyRows = mergeByDate(previous?.dailyRecords, freshDaily, plan.fetchSince, r => r.date);
+  const placementRows = mergeByDate(
+    previous?.placementRecords, freshPlacements, plan.fetchSince.slice(0, 7), r => r.month
+  );
 
   const scopeName = isAll
     ? `Toàn BM Ucmas Việt Nam (${bmAccounts.length} tài khoản)`
     : targets[0].name;
 
-  console.log(`[Meta Ads API] Xong ${campaigns.length} chiến dịch, ${Object.keys(adMap).length} quảng cáo trong ${((Date.now() - started) / 1000).toFixed(1)}s. Cảnh báo: ${warnings.length}`);
+  const secs = ((Date.now() - started) / 1000).toFixed(1);
+  console.log(
+    `[Meta Ads API] Xong ${campaigns.length} chiến dịch, ${Object.keys(adMap).length} quảng cáo, ` +
+    `${freshDaily.length} dòng mới (tổng ${dailyRows.length}) trong ${secs}s. Cảnh báo: ${warnings.length}`
+  );
 
   return {
-    version: 3,
+    version: 4,
     fetchedAt: new Date().toISOString(),
-    datePreset,
-    /** Range the snapshot actually covers — the sync always pulls `datePreset`, and
-     *  report.js refuses to slice a range wider than this instead of under-reporting. */
-    syncWindow: datePreset,
+    /** Khoảng thời gian kho dữ liệu THỰC SỰ chứa. report.js cảnh báo nếu xem ra ngoài. */
+    coverage: { since: targetSince, until: targetUntil },
+    lastSync: { mode: plan.mode, since: plan.fetchSince, until: plan.fetchUntil, seconds: Number(secs), newRows: freshDaily.length },
+    /** Tần suất/reach luôn là của 30 ngày gần nhất, độc lập với `coverage`. */
+    frequencyWindow: 'last_30d',
     scope: { businessId: config.businessId, accountId: isAll ? 'ALL' : targets[0].numericId, name: scopeName, currency: targets[0].currency || 'VND' },
     bmAccounts,
     campaigns,
-    /** adId → campaignId, for attributing Google Sheet CRM leads (schema v3). */
+    /** adId → campaignId, để quy kết lead từ Google Sheet CRM về đúng chiến dịch. */
     adMap,
     dailyRecords: dailyRows,
     placementRecords: placementRows,
@@ -409,16 +508,65 @@ export async function fetchRawReport(accountId = 'ALL', datePreset = 'last_30d')
   };
 }
 
+/**
+ * Quyết định lần đồng bộ này phải kéo khoảng nào.
+ *
+ * - Chưa có dữ liệu, hoặc kho cũ bắt đầu MUỘN hơn mốc cần → kéo toàn bộ.
+ * - Đã có đủ → chỉ kéo từ (ngày cuối của kho − retroDays) tới hôm nay.
+ *   Lùi lại `retroDays` vì Meta còn ghi nhận chuyển đổi cho các ngày vừa qua
+ *   (cửa sổ quy kết 7 ngày); chỉ lấy ngày mới sẽ bỏ sót phần đó.
+ */
+export function planSync(previous, targetSince, targetUntil, retroDays = config.retroDays) {
+  const cov = previous?.coverage;
+  const hasUsableCoverage =
+    previous &&
+    Array.isArray(previous.dailyRecords) && previous.dailyRecords.length > 0 &&
+    cov?.since && cov?.until &&
+    cov.since <= targetSince;
+
+  if (!hasUsableCoverage) {
+    return { mode: 'full', fetchSince: targetSince, fetchUntil: targetUntil };
+  }
+
+  let fetchSince = addDaysTo(cov.until, -retroDays + 1);
+  if (fetchSince < targetSince) fetchSince = targetSince;
+  if (fetchSince > targetUntil) fetchSince = targetUntil;
+
+  return { mode: 'incremental', fetchSince, fetchUntil: targetUntil };
+}
+
+/**
+ * Giữ bản ghi cũ TRƯỚC `fromKey`, thay toàn bộ từ `fromKey` trở đi bằng bản ghi mới.
+ * Thay vì cộng dồn, vì Meta có thể sửa lại số của những ngày đã qua.
+ */
+export function mergeByDate(previousRows, freshRows, fromKey, keyOf) {
+  const kept = (previousRows || []).filter(r => keyOf(r) && keyOf(r) < fromKey);
+  return [...kept, ...freshRows];
+}
+
 // Allow CLI execution: node src/meta-api.js  (npm run fetch)
+// Cờ --full ép kéo lại toàn bộ kho dữ liệu thay vì chỉ phần mới.
 if (process.argv[1] && process.argv[1].endsWith('meta-api.js')) {
   // No top-level await here: report.js imports this module (circular) — let evaluation finish first.
-  Promise.all([import('./report.js'), import('./export-csv.js')])
-    .then(async ([{ buildView }, { saveReportFiles }]) => {
-      const raw = await fetchRawReport('ALL', 'last_30d');
+  Promise.all([import('./report.js'), import('./export-csv.js'), import('fs'), import('path')])
+    .then(async ([{ buildView }, { saveReportFiles }, fs, path]) => {
+      const forceFull = process.argv.includes('--full');
+      const snapPath = path.default.resolve(ROOT_DIR_FOR_CLI, 'data', 'latest_insights.json');
+
+      // Nạp snapshot cũ để đồng bộ gia tăng (trừ khi chạy với --full).
+      let previous = null;
+      if (!forceFull && fs.default.existsSync(snapPath)) {
+        try {
+          previous = JSON.parse(fs.default.readFileSync(snapPath, 'utf-8'));
+        } catch { previous = null; }
+      }
+
+      const raw = await fetchRawReport('ALL', { previous });
       const view = buildView(raw, 'ALL');
       saveReportFiles(raw, view);
       const s = view.summary;
       console.log(`\n================ BÁO CÁO ${raw.scope.name} ================`);
+      console.log(`Kho dữ liệu: ${raw.coverage.since} → ${raw.coverage.until} | ${raw.dailyRecords.length.toLocaleString('vi-VN')} dòng theo ngày`);
       console.log(`Tổng chi tiêu: ${s.totalSpend.toLocaleString('vi-VN')} ₫ | Tin nhắn: ${s.totalMessages} | CPA: ${s.avgCpa.toLocaleString('vi-VN')} ₫`);
       console.log(`Ngân sách dự kiến hôm nay: ${s.expectedDailyBudget.toLocaleString('vi-VN')} ₫ | Đã chi hôm nay: ${s.todaySpend.toLocaleString('vi-VN')} ₫`);
       for (const p of view.products) {

@@ -19,6 +19,19 @@ export const config = {
   businessId: process.env.META_BUSINESS_ID || DEFAULT_BUSINESS_ID,
   apiVersion: process.env.META_API_VERSION || 'v21.0',
   port: parseInt(process.env.PORT || '3000', 10),
+
+  /**
+   * Ngày bắt đầu kho dữ liệu. Lần đồng bộ đầu tiên sẽ kéo từ đây tới hôm nay
+   * (mất vài phút); các lần sau chỉ kéo phần mới.
+   */
+  syncStartDate: process.env.SYNC_START_DATE || '2026-01-01',
+
+  /**
+   * Số ngày gần nhất LUÔN được kéo lại mỗi lần đồng bộ.
+   * Meta quy kết chuyển đổi theo cửa sổ 7 ngày, nên số liệu của những ngày vừa qua
+   * còn thay đổi sau khi đã ghi nhận. Chỉ lấy "ngày mới" sẽ bỏ sót phần thay đổi đó.
+   */
+  retroDays: parseInt(process.env.SYNC_RETRO_DAYS || '7', 10),
   /**
    * Off by default: the dashboard exposes BM spend, revenue and customer phone numbers,
    * so only the machine running it may connect. Set ALLOW_REMOTE=true in .env to open it

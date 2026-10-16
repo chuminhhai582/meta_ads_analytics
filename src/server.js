@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { config, ROOT_DIR, updateEnvFile, validateConfigInput, SESSION_TOKEN } from './config.js';
 import { fetchRawReport } from './meta-api.js';
-import { buildView } from './report.js';
+import { buildView, DATE_PRESETS } from './report.js';
 import { generateAnalysis } from './ai-analyst.js';
 import {
   saveReportFiles, convertToCsv, campaignFields, dailyFields, CSV_BOM
@@ -12,7 +12,7 @@ import { fetchGoogleSheetLeads } from './google-sheet.js';
 
 const dataDir = path.resolve(ROOT_DIR, 'data');
 const publicDir = path.resolve(ROOT_DIR, 'public');
-const VALID_PRESETS = ['last_30d', 'last_14d', 'last_7d', 'this_month', 'yesterday', 'today'];
+
 const VIEW_CACHE_MAX = 32;
 
 const app = express();
@@ -82,9 +82,11 @@ function loadSnapshot() {
   if (fs.existsSync(jsonPath)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-      // v2 snapshots have no adMap: they still render, and the view adds a note telling
-      // the owner to re-sync so leads can be attributed to campaigns.
-      if (parsed.version === 2 || parsed.version === 3) rawReport = parsed;
+      // v2: chưa có adMap (lead không ghép được chiến dịch).
+      // v3: có adMap nhưng chưa có coverage → lần đồng bộ sau sẽ kéo lại toàn bộ.
+      // v4: có coverage → đồng bộ chỉ lấy phần mới.
+      // Bản cũ vẫn hiển thị được; buildView tự thêm ghi chú nhắc đồng bộ lại.
+      if (parsed.version >= 2 && parsed.version <= 4) rawReport = parsed;
       else console.warn(`[Server] Bỏ qua snapshot schema v${parsed.version} (không hỗ trợ).`);
     } catch (e) {
       console.warn('[Server] Lỗi đọc latest_insights.json:', e.message);
@@ -122,7 +124,7 @@ function readOptions(source) {
     activeTab,
     product: source.product || source.productFilter || (activeTab !== 'all' ? activeTab : 'ALL'),
     accountId: source.accountId || 'ALL',
-    datePreset: VALID_PRESETS.includes(source.datePreset)
+    datePreset: DATE_PRESETS.includes(source.datePreset)
       ? source.datePreset
       : (rawReport?.datePreset || 'last_30d')
   };
@@ -195,12 +197,15 @@ app.post('/api/sync', requireSessionToken, async (req, res) => {
         return rawReport?.leadsRecords || [];
       });
 
-    // 2. Fetch Meta Ads. The sync window is fixed at 30 days: the Data Lake slices every
-    //    shorter preset locally from the per-day rows (see report.js).
+    // 2. Fetch Meta Ads.
+    //    Lần đầu (chưa có coverage) kéo từ config.syncStartDate tới hôm nay — mất vài phút.
+    //    Các lần sau chỉ kéo phần mới + lùi lại config.retroDays ngày, vì Meta còn
+    //    ghi nhận thêm chuyển đổi cho những ngày vừa qua. Xem planSync() trong meta-api.js.
     const metaPromise = (async () => {
       try {
         if (!syncInFlight) {
-          syncInFlight = fetchRawReport('ALL', 'last_30d').finally(() => { syncInFlight = null; });
+          syncInFlight = fetchRawReport('ALL', { previous: rawReport })
+            .finally(() => { syncInFlight = null; });
         }
         return await syncInFlight;
       } catch (err) {
@@ -225,7 +230,12 @@ app.post('/api/sync', requireSessionToken, async (req, res) => {
 
     const msg = metaError
       ? `Đã cập nhật ${leadsCount} leads từ Google Sheet. (Meta API: ${metaError})`
-      : `Đồng bộ toàn bộ BM (${rawReport.bmAccounts?.length || 0} tài khoản) & ${leadsCount} leads Google Sheet thành công!`;
+      : (() => {
+          const ls = rawReport.lastSync || {};
+          const what = ls.mode === 'full' ? 'Kéo toàn bộ kho dữ liệu' : 'Cập nhật phần mới';
+          return `${what} ${ls.since || ''} → ${ls.until || ''} cho ${rawReport.bmAccounts?.length || 0} tài khoản ` +
+                 `(${(ls.newRows || 0).toLocaleString('vi-VN')} dòng) & ${leadsCount} leads Google Sheet. Xong trong ${ls.seconds || '?'}s.`;
+        })();
 
     respondWithView(res, req.body, {
       success: true,

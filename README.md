@@ -124,14 +124,29 @@ Truy cập trình duyệt tại: **`http://localhost:3000`**
 - Bấm nút **Đồng bộ** để kéo số liệu mới nhất từ Meta **và** lead từ Google Sheet (~10 giây).
 - Bấm nút **bảng** cạnh đó để chỉ làm mới lead từ Google Sheet (~0,3 giây, không gọi Meta API).
 - Menu **tải xuống** xuất CSV chiến dịch, CSV theo ngày hoặc JSON dữ liệu đã lọc.
-- Hoặc từ Terminal: chạy `npm run fetch` để tự động kéo dữ liệu và xuất file ra thư mục `data/`.
+- Hoặc từ Terminal: chạy `npm run fetch` để kéo dữ liệu và xuất file ra thư mục `data/`.
+
+**Kho dữ liệu hoạt động thế nào:** lần đồng bộ ĐẦU TIÊN kéo từ `SYNC_START_DATE`
+(mặc định 01/01/2026) tới hôm nay — đo thực tế **~56 giây** cho cả năm 2026 (6.471 dòng,
+9 tài khoản). Mọi lần sau **chỉ kéo phần mới**, cộng thêm 7 ngày gần nhất vì Meta còn ghi
+nhận thêm chuyển đổi cho những ngày vừa qua — chỉ mất **~10 giây**.
+
+Muốn kéo lại toàn bộ từ đầu:
+
+```bash
+npm run fetch -- --full
+```
+
+**Lead từ Google Sheet** luôn được đọc lại TOÀN BỘ mỗi lần đồng bộ, nên khi bạn điền thêm
+ngày L2/L3/L4 hay học phí vào một lead cũ, lần sync kế tiếp sẽ cập nhật đúng — không chỉ
+lấy lead mới tạo.
 
 ### 4. Kiểm thử
 
 ```bash
 npm test
 ```
-32 test khoá lại các chỉ số dễ sai nhất: ghép lead vào chiến dịch, lọc theo kỳ và theo
+41 test khoá lại các chỉ số dễ sai nhất: ghép lead vào chiến dịch, lọc theo kỳ và theo
 tài khoản, bất biến `Σ các dòng + chưa gán = tổng KPI`, và việc không gửi số điện thoại
 thật về browser. **Chạy trước khi commit mọi thay đổi trong `src/report.js`.**
 

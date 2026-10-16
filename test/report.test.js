@@ -10,7 +10,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { buildView, getDateRange, getVietnamDateString, maskPhone } from '../src/report.js';
-import { detectProduct, extractConversions, TARGET_KEYS } from '../src/meta-api.js';
+import {
+  detectProduct, extractConversions, TARGET_KEYS,
+  monthChunks, planSync, mergeByDate, addDaysTo
+} from '../src/meta-api.js';
 import { parseCsvRows, normalizeDate, normalizePhone, summarizeLeads, leadInRange } from '../src/google-sheet.js';
 import { classifyCampaign, THRESHOLDS } from '../src/ai-analyst.js';
 import { convertToCsv } from '../src/export-csv.js';
@@ -231,17 +234,127 @@ test('A-07: CPA chỉ tính trên tin nhắn', () => {
   assert.equal(c2.cpa, Math.round(c2.spend / 5), 'CPA = chi tiêu / tin nhắn, không gồm chuyển đổi khác');
 });
 
-test('A-07: chỉ gắn cờ bão hòa khi tần suất đúng kỳ đồng bộ', () => {
+test('A-07: tần suất luôn là cửa sổ 30 ngày cố định nên bão hòa luôn đánh giá được', () => {
   const snap = makeSnapshot();
-  const sameWindow = buildView(snap, { datePreset: 'last_30d' });
-  const otherWindow = buildView(snap, { datePreset: 'yesterday' });
-
-  assert.equal(sameWindow.fatigueApplicable, true);
-  assert.equal(otherWindow.fatigueApplicable, false);
+  // Tần suất giờ được kéo riêng với date_preset=last_30d, độc lập với phạm vi kho dữ
+  // liệu, nên nó có nghĩa như nhau ở mọi khoảng thời gian đang xem.
+  for (const preset of ['today', 'yesterday', 'last_30d', 'this_year']) {
+    assert.equal(buildView(snap, { datePreset: preset }).fatigueApplicable, true, preset);
+    assert.equal(buildView(snap, { datePreset: preset }).frequencyWindow, 'last_30d', preset);
+  }
 
   const c2 = { effective_status: 'ACTIVE', messages: 0, cpa: 0, spend: 0, frequency: 3.4 };
   assert.equal(classifyCampaign(c2, true), 'fatigue_alert');
-  assert.equal(classifyCampaign(c2, false), 'maintain', 'Không kết luận bão hòa bằng tần suất của kỳ khác');
+  assert.equal(classifyCampaign(c2, false), 'maintain', 'Vẫn khoá được khi gọi tường minh');
+});
+
+// ---------------------------------------------------------------------------
+// Kho dữ liệu cả năm + đồng bộ gia tăng
+// ---------------------------------------------------------------------------
+test('monthChunks cắt đúng theo từng tháng và kẹp hai đầu', () => {
+  const c = monthChunks('2026-01-01', '2026-10-16');
+  assert.equal(c.length, 10);
+  assert.deepEqual(c[0], { since: '2026-01-01', until: '2026-01-31' });
+  assert.deepEqual(c[9], { since: '2026-10-01', until: '2026-10-16' });
+
+  // Bắt đầu giữa tháng
+  const mid = monthChunks('2026-03-15', '2026-04-10');
+  assert.deepEqual(mid, [
+    { since: '2026-03-15', until: '2026-03-31' },
+    { since: '2026-04-01', until: '2026-04-10' }
+  ]);
+
+  // Trong cùng một tháng
+  assert.deepEqual(monthChunks('2026-05-03', '2026-05-09'), [{ since: '2026-05-03', until: '2026-05-09' }]);
+  // Năm nhuận: 2026 không nhuận nên tháng 2 có 28 ngày
+  assert.equal(monthChunks('2026-02-01', '2026-02-28')[0].until, '2026-02-28');
+  // Khoảng không hợp lệ
+  assert.deepEqual(monthChunks('2026-05-10', '2026-05-01'), []);
+});
+
+test('planSync: chưa có kho thì kéo toàn bộ', () => {
+  assert.deepEqual(
+    planSync(null, '2026-01-01', '2026-10-16'),
+    { mode: 'full', fetchSince: '2026-01-01', fetchUntil: '2026-10-16' }
+  );
+  // Có coverage nhưng rỗng dữ liệu -> vẫn kéo toàn bộ
+  assert.equal(
+    planSync({ coverage: { since: '2026-01-01', until: '2026-10-14' }, dailyRecords: [] }, '2026-01-01', '2026-10-16').mode,
+    'full'
+  );
+});
+
+test('planSync: đã có kho thì chỉ kéo phần mới, lùi lại retroDays', () => {
+  const prev = { coverage: { since: '2026-01-01', until: '2026-10-14' }, dailyRecords: [{ date: '2026-01-01' }] };
+  const p = planSync(prev, '2026-01-01', '2026-10-16', 7);
+  assert.equal(p.mode, 'incremental');
+  // Lùi 7 ngày từ 14/10 -> bắt đầu từ 08/10, không phải 15/10
+  assert.equal(p.fetchSince, '2026-10-08');
+  assert.equal(p.fetchUntil, '2026-10-16');
+});
+
+test('planSync: kho bắt đầu muộn hơn mốc cần thì phải kéo lại toàn bộ', () => {
+  const prev = { coverage: { since: '2026-05-01', until: '2026-10-14' }, dailyRecords: [{ date: '2026-05-01' }] };
+  assert.equal(planSync(prev, '2026-01-01', '2026-10-16').mode, 'full',
+    'Muốn dữ liệu từ 01/01 mà kho chỉ có từ 01/05 thì không thể vá bằng incremental');
+});
+
+test('mergeByDate: thay dữ liệu từ mốc trở đi, giữ nguyên phần trước đó', () => {
+  const prev = [{ date: '2026-01-05', v: 'cu' }, { date: '2026-10-10', v: 'cu' }];
+  const fresh = [{ date: '2026-10-10', v: 'moi' }, { date: '2026-10-16', v: 'moi' }];
+  const out = mergeByDate(prev, fresh, '2026-10-10', r => r.date);
+
+  assert.equal(out.length, 3);
+  assert.equal(out.find(r => r.date === '2026-01-05').v, 'cu', 'Dữ liệu cũ ngoài vùng kéo lại phải giữ nguyên');
+  assert.equal(out.find(r => r.date === '2026-10-10').v, 'moi', 'Ngày nằm trong vùng kéo lại phải bị THAY, không cộng dồn');
+  assert.ok(out.some(r => r.date === '2026-10-16'), 'Ngày mới phải được thêm');
+});
+
+test('mergeByDate: không có dữ liệu cũ thì trả về đúng dữ liệu mới', () => {
+  const fresh = [{ date: '2026-10-16' }];
+  assert.deepEqual(mergeByDate(null, fresh, '2026-10-01', r => r.date), fresh);
+  assert.deepEqual(mergeByDate([], fresh, '2026-10-01', r => r.date), fresh);
+});
+
+test('getDateRange hỗ trợ các kỳ dài mới', () => {
+  const ref = new Date('2026-10-16T10:00:00Z');
+  assert.equal(getDateRange('last_90d', ref).startDate, '2026-07-19');
+  assert.equal(getDateRange('this_year', ref).startDate, '2026-01-01');
+  assert.equal(getDateRange('this_quarter', ref).startDate, '2026-10-01');
+  const lm = getDateRange('last_month', ref);
+  assert.equal(lm.startDate, '2026-09-01');
+  assert.equal(lm.endDate, '2026-09-30', 'Tháng trước phải kết thúc đúng ngày cuối tháng');
+
+  // Tháng trước khi đang ở tháng 1 -> lùi sang năm ngoái
+  const jan = getDateRange('last_month', new Date('2026-01-10T10:00:00Z'));
+  assert.equal(jan.startDate, '2025-12-01');
+  assert.equal(jan.endDate, '2025-12-31');
+});
+
+test('Cảnh báo khi xem ra ngoài phạm vi kho dữ liệu', () => {
+  const snap = makeSnapshot();
+  snap.coverage = { since: '2026-10-01', until: TODAY };
+  const v = buildView(snap, { datePreset: 'this_year' });
+  assert.ok(
+    v.dataNotes.some(n => n.level === 'warning' && /Kho dữ liệu chỉ có từ/.test(n.message)),
+    'Phải cảnh báo khi khoảng chọn bắt đầu trước coverage.since'
+  );
+});
+
+test('Phân bổ nền tảng lọc theo tháng', () => {
+  const snap = makeSnapshot();
+  snap.coverage = { since: '2026-01-01', until: TODAY };
+  const thisMonth = TODAY.slice(0, 7);
+  snap.placementRecords = [
+    { campaignId: 'C1', accountId: '100', product: 'ucmas', platform: 'facebook', month: thisMonth, spend: 100, impressions: 10 },
+    { campaignId: 'C1', accountId: '100', product: 'ucmas', platform: 'facebook', month: '2026-01', spend: 999, impressions: 99 }
+  ];
+  const today = buildView(snap, { datePreset: 'today' });
+  const fb = today.placements.find(p => p.platform === 'facebook');
+  assert.equal(fb.spend, 100, 'Chỉ tính tháng nằm trong khoảng đang xem, không gộp cả năm');
+
+  const year = buildView(snap, { datePreset: 'this_year' });
+  assert.equal(year.placements.find(p => p.platform === 'facebook').spend, 1099, 'Cả năm thì cộng hết');
 });
 
 // ---------------------------------------------------------------------------
