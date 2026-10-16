@@ -1,15 +1,24 @@
 /**
  * Build the dashboard "view" from a raw report (src/meta-api.js → fetchRawReport).
  *
- * Local Data Lake Engine v3:
- *  - Calculates aggregations for ANY date preset ('today', 'yesterday', 'last_7d', 'last_14d', 'last_30d', 'this_month')
- *  - Calculates aggregations for ANY account ('ALL' or specific account ID)
- *  - Calculates aggregations for ANY product ('ALL', 'ucmas', 'uckid', 'mathca', 'traihe')
- *  - Integrates Lead & CRM Funnel from Google Sheet (L1 ➔ L2 ➔ L3 ➔ L4, Revenue, CAC, CPL)
- *  - 100% Local / In-memory: executes in < 5ms without calling Meta API.
+ * Local Data Lake Engine v4:
+ *  - Aggregations for ANY date preset ('today', 'yesterday', 'last_7d', 'last_14d', 'last_30d', 'this_month')
+ *  - Aggregations for ANY account ('ALL' or specific account ID)
+ *  - Aggregations for ANY product ('ALL', 'ucmas', 'uckid', 'mathca', 'traihe')
+ *  - Lead & CRM funnel (L1 ➔ L2 ➔ L3 ➔ L4, revenue, CAC, CPL) from the Google Sheet
+ *  - 100% local / in-memory: no Meta API call.
+ *
+ * Lead attribution (schema v3+):
+ *  Leads carry the AD id from the CRM sheet, so they are matched to a campaign through
+ *  `raw.adMap` (adId → campaignId), which the sync builds from act_X/ads. A lead that
+ *  cannot be matched is NEVER spread across campaigns by spend weight — it lands in
+ *  `unassignedLeads`, reported as its own labelled figure. See quy-tac-du-an.md §4.
+ *
+ * Invariant enforced here and covered by test/report.test.js:
+ *  summary.<L1..L4|revenue> === Σ(campaigns shown) + unassignedLeads.<same field>
  */
 import { TARGET_PRODUCTS, TARGET_KEYS } from './meta-api.js';
-import { summarizeLeads } from './google-sheet.js';
+import { leadInRange, emptyFunnel, addLeadToFunnel, withFunnelRates } from './google-sheet.js';
 
 export const PLATFORM_LABELS = {
   facebook: 'Facebook',
@@ -91,6 +100,7 @@ function aggregate(campaigns) {
   const s = campaigns.reduce((acc, c) => {
     acc.spend += c.spend || 0;
     acc.messages += c.messages || 0;
+    acc.otherConversions += c.otherConversions || 0;
     acc.impressions += c.impressions || 0;
     acc.clicks += c.clicks || 0;
     acc.expectedDailyBudget += c.expectedDailyBudget || 0;
@@ -98,7 +108,10 @@ function aggregate(campaigns) {
     acc.todayMessages += c.todayMessages || 0;
     if (c.effective_status === 'ACTIVE') acc.activeCount += 1;
     return acc;
-  }, { spend: 0, messages: 0, impressions: 0, clicks: 0, expectedDailyBudget: 0, todaySpend: 0, todayMessages: 0, activeCount: 0 });
+  }, {
+    spend: 0, messages: 0, otherConversions: 0, impressions: 0, clicks: 0,
+    expectedDailyBudget: 0, todaySpend: 0, todayMessages: 0, activeCount: 0
+  });
 
   return {
     ...s,
@@ -113,19 +126,117 @@ function aggregate(campaigns) {
 }
 
 /**
- * Mask phone number for dashboard display (e.g. 0968***189)
+ * Mask phone number for dashboard display (e.g. 0968***189).
  */
-function maskPhone(phone) {
+export function maskPhone(phone) {
   if (!phone || phone.length < 8) return phone || '';
   return phone.slice(0, 4) + '***' + phone.slice(-3);
 }
 
 /**
- * Build view with multi-dimensional local slicing & lead funnel data:
+ * Project an enrolled lead down to the fields the dashboard actually renders.
+ * The raw phone number and ad id deliberately do NOT leave the server.
+ */
+function publicEnrolled(lead) {
+  return {
+    phoneMasked: maskPhone(lead.phone),
+    l4Date: lead.l4Date || null,
+    entryDate: lead.entryDate || null,
+    fanpage: lead.fanpage || '',
+    revenue: lead.revenue || 0,
+    product: lead.product || 'khac'
+  };
+}
+
+/** Derived cost metrics for a funnel bucket against a given spend. */
+function leadCosts(spend, funnel) {
+  return {
+    cpl: funnel.l1Count > 0 ? round(spend / funnel.l1Count) : 0,
+    cpaL3: funnel.l3Count > 0 ? round(spend / funnel.l3Count) : 0,
+    cac: funnel.l4Count > 0 ? round(spend / funnel.l4Count) : 0,
+    roas: spend > 0 ? parseFloat((funnel.revenue / spend).toFixed(2)) : 0
+  };
+}
+
+/**
+ * Attribute every lead in scope to a campaign, in ONE pass.
+ *
+ * @returns {{
+ *   byCampaign: Map<string, object>,     // campaignId → funnel bucket
+ *   byProduct: Record<string, object>,   // product key → funnel bucket (campaigns + unassigned)
+ *   unassignedByProduct: Record<string, object>,
+ *   enrolled: object[],                  // in-scope L4 leads, newest first
+ *   matchedCount: number,
+ *   unmatchedCount: number
+ * }}
+ */
+function attributeLeads(leads, { adMap, campaignById, selectedAccount, startDate, endDate }) {
+  const byCampaign = new Map();
+  const byProduct = {};
+  const unassignedByProduct = {};
+  for (const k of TARGET_KEYS) {
+    byProduct[k] = emptyFunnel();
+    unassignedByProduct[k] = emptyFunnel();
+  }
+
+  const enrolled = [];
+  let matchedCount = 0;
+  let unmatchedCount = 0;
+
+  for (const lead of leads) {
+    if (!leadInRange(lead, startDate, endDate)) continue;
+
+    const campaignId = lead.adId ? adMap[lead.adId] : undefined;
+    const camp = campaignId ? campaignById.get(campaignId) : undefined;
+
+    // An unmatched lead has no account, so it cannot be shown under a single account.
+    if (selectedAccount !== 'ALL' && (!camp || camp.accountId !== selectedAccount)) continue;
+
+    // The matched campaign's product wins over the sheet's own guess.
+    const product = camp ? camp.product : lead.product;
+    if (!TARGET_KEYS.includes(product)) continue; // 'khac' is out of scope for all 5 tabs
+
+    addLeadToFunnel(byProduct[product], lead);
+
+    if (camp) {
+      matchedCount += 1;
+      const bucket = byCampaign.get(camp.id) || emptyFunnel();
+      addLeadToFunnel(bucket, lead);
+      byCampaign.set(camp.id, bucket);
+    } else {
+      unmatchedCount += 1;
+      addLeadToFunnel(unassignedByProduct[product], lead);
+    }
+
+    if (lead.l4) enrolled.push(lead);
+  }
+
+  enrolled.sort((a, b) => (b.l4Date || '').localeCompare(a.l4Date || ''));
+
+  return { byCampaign, byProduct, unassignedByProduct, enrolled, matchedCount, unmatchedCount };
+}
+
+/** Sum a list of funnel buckets. */
+function sumFunnels(buckets) {
+  return buckets.reduce((acc, b) => {
+    acc.totalLeads += b.totalLeads;
+    acc.l1Count += b.l1Count;
+    acc.l2Count += b.l2Count;
+    acc.l3Count += b.l3Count;
+    acc.l4Count += b.l4Count;
+    acc.revenue += b.revenue;
+    return acc;
+  }, emptyFunnel());
+}
+
+/**
+ * Build view with multi-dimensional local slicing & lead funnel data.
  * @param {object} raw Raw report from latest_insights.json
  * @param {object|string} options { product = 'ALL', accountId = 'ALL', datePreset = 'last_30d', activeTab = 'all' }
  */
 export function buildView(raw, options = {}) {
+  if (!raw) throw new Error('buildView: chưa có dữ liệu snapshot (rawReport rỗng).');
+
   const opts = typeof options === 'string' ? { product: options } : (options || {});
   const activeTab = opts.activeTab || (opts.product && opts.product !== 'ALL' ? opts.product : 'all');
   const product = opts.product || (activeTab !== 'all' ? activeTab : 'ALL');
@@ -140,6 +251,11 @@ export function buildView(raw, options = {}) {
   const dailyRecords = raw.dailyRecords || [];
   const placementRecords = raw.placementRecords || [];
   const rawLeads = raw.leadsRecords || [];
+  const rawCampaignsList = raw.campaigns || [];
+  const hasDaily = dailyRecords.length > 0;
+
+  // Campaign lookup by id — replaces the O(leads × campaigns) .find() this used to do.
+  const campaignById = new Map(rawCampaignsList.map(c => [c.id, c]));
 
   // 1. Group daily stats by campaign for chosen date range & account
   const campAggMap = new Map();
@@ -157,9 +273,11 @@ export function buildView(raw, options = {}) {
     }
 
     if (d.date >= startDate && d.date <= endDate) {
-      const cur = campAggMap.get(d.campaignId) || { spend: 0, messages: 0, impressions: 0, clicks: 0 };
+      const cur = campAggMap.get(d.campaignId) ||
+        { spend: 0, messages: 0, otherConversions: 0, impressions: 0, clicks: 0 };
       cur.spend += d.spend || 0;
       cur.messages += d.messages || 0;
+      cur.otherConversions += d.otherConversions || 0;
       cur.impressions += d.impressions || 0;
       cur.clicks += d.clicks || 0;
       campAggMap.set(d.campaignId, cur);
@@ -197,64 +315,26 @@ export function buildView(raw, options = {}) {
     campPlacementsMap.set(p.campaignId, cur);
   }
 
-  // 1.6. Match leads directly to campaigns via Ad ID or matching 11-digit prefix
-  const directLeadsMap = new Map();
-  const assignedLeadIds = new Set();
-  const rawCampaignsList = raw.campaigns || [];
-
-  for (const l of rawLeads) {
-    if (!l.adId) continue;
-    const matchedCamp = rawCampaignsList.find(c =>
-      c.id === l.adId ||
-      (c.product === l.product && l.adId.length >= 11 && c.id.slice(0, 11) === l.adId.slice(0, 11))
-    );
-    if (matchedCamp) {
-      assignedLeadIds.add(l.id);
-      const cur = directLeadsMap.get(matchedCamp.id) || { l1: 0, l2: 0, l3: 0, l4: 0, revenue: 0 };
-      if (l.l1) cur.l1++;
-      if (l.l2) cur.l2++;
-      if (l.l3) cur.l3++;
-      if (l.l4) cur.l4++;
-      cur.revenue += l.revenue || 0;
-      directLeadsMap.set(matchedCamp.id, cur);
-    }
-  }
-
-  // Group unassigned leads by product
-  const unassignedByProduct = {};
-  TARGET_KEYS.forEach(k => {
-    unassignedByProduct[k] = { l1: 0, l2: 0, l3: 0, l4: 0, revenue: 0 };
+  // 1.6. Attribute CRM leads to campaigns through the adId → campaignId map (ONE pass)
+  const adMap = raw.adMap || {};
+  const leadAttr = attributeLeads(rawLeads, {
+    adMap,
+    campaignById,
+    selectedAccount,
+    startDate,
+    endDate
   });
-  for (const l of rawLeads) {
-    if (assignedLeadIds.has(l.id)) continue;
-    const bucket = unassignedByProduct[l.product];
-    if (bucket) {
-      if (l.l1) bucket.l1++;
-      if (l.l2) bucket.l2++;
-      if (l.l3) bucket.l3++;
-      if (l.l4) bucket.l4++;
-      bucket.revenue += l.revenue || 0;
-    }
-  }
-
-  // Total spend per product for proportional allocation
-  const productSpendMap = {};
-  TARGET_KEYS.forEach(k => { productSpendMap[k] = 0; });
-  for (const c of rawCampaignsList) {
-    if (selectedAccount !== 'ALL' && c.accountId !== selectedAccount) continue;
-    const agg = dailyRecords.length > 0 ? (campAggMap.get(c.id) || { spend: 0 }) : c;
-    const sp = agg.spend || 0;
-    if (sp > 0 && productSpendMap[c.product] !== undefined) {
-      productSpendMap[c.product] += sp;
-    }
-  }
 
   // 2. Map all campaigns with aggregated metrics + lead funnel & platform breakdown
   const allFilteredCampaigns = rawCampaignsList
     .filter(c => selectedAccount === 'ALL' || c.accountId === selectedAccount)
     .map(c => {
-      const agg = dailyRecords.length > 0 ? (campAggMap.get(c.id) || { spend: 0, messages: 0, impressions: 0, clicks: 0 }) : c;
-      const t = dailyRecords.length > 0 ? (campTodayMap.get(c.id) || { spend: 0, messages: 0 }) : { spend: c.todaySpend || 0, messages: c.todayMessages || 0 };
+      const agg = hasDaily
+        ? (campAggMap.get(c.id) || { spend: 0, messages: 0, otherConversions: 0, impressions: 0, clicks: 0 })
+        : c;
+      const t = hasDaily
+        ? (campTodayMap.get(c.id) || { spend: 0, messages: 0 })
+        : { spend: c.todaySpend || 0, messages: c.todayMessages || 0 };
 
       const spend = agg.spend || 0;
       const messages = agg.messages || 0;
@@ -264,10 +344,10 @@ export function buildView(raw, options = {}) {
       // Placement metrics
       const plc = campPlacementsMap.get(c.id) || { fbSpend: 0, igSpend: 0, msgSpend: 0, audSpend: 0, otherSpend: 0, total: 0 };
       let fbSpend = plc.fbSpend;
-      let igSpend = plc.igSpend;
-      let msgSpend = plc.msgSpend;
-      let audSpend = plc.audSpend;
-      let otherSpend = plc.otherSpend;
+      const igSpend = plc.igSpend;
+      const msgSpend = plc.msgSpend;
+      const audSpend = plc.audSpend;
+      const otherSpend = plc.otherSpend;
       if (spend > 0 && plc.total === 0) {
         fbSpend = spend;
       }
@@ -279,27 +359,15 @@ export function buildView(raw, options = {}) {
       if (audSpend > 0) platformBreakdown.push({ platform: 'audience_network', short: 'Aud', label: 'Audience Net', spend: audSpend, pct: round((audSpend / baseSpend) * 100) });
       if (otherSpend > 0) platformBreakdown.push({ platform: 'other', short: 'Khác', label: 'Khác', spend: otherSpend, pct: round((otherSpend / baseSpend) * 100) });
 
-      // Leads metrics (direct + proportional)
-      const direct = directLeadsMap.get(c.id) || { l1: 0, l2: 0, l3: 0, l4: 0, revenue: 0 };
-      const unassigned = unassignedByProduct[c.product] || { l1: 0, l2: 0, l3: 0, l4: 0, revenue: 0 };
-      const prodTotalSpend = productSpendMap[c.product] || 0;
-      const weight = (spend > 0 && prodTotalSpend > 0) ? (spend / prodTotalSpend) : 0;
-
-      const l1Count = direct.l1 + Math.round(unassigned.l1 * weight);
-      const l2Count = direct.l2 + Math.round(unassigned.l2 * weight);
-      const l3Count = direct.l3 + Math.round(unassigned.l3 * weight);
-      const l4Count = direct.l4 + Math.round(unassigned.l4 * weight);
-      const revenue = direct.revenue + Math.round(unassigned.revenue * weight);
-
-      const cpl = l1Count > 0 ? round(spend / l1Count) : 0;
-      const cac = l4Count > 0 ? round(spend / l4Count) : 0;
-      const cpaL3 = l3Count > 0 ? round(spend / l3Count) : 0;
-      const roas = spend > 0 ? parseFloat((revenue / spend).toFixed(2)) : 0;
+      // Lead metrics — ONLY leads whose ad id really maps to this campaign.
+      const funnel = leadAttr.byCampaign.get(c.id) || emptyFunnel();
+      const costs = leadCosts(spend, funnel);
 
       return {
         ...c,
         spend,
         messages,
+        otherConversions: agg.otherConversions || 0,
         impressions,
         clicks,
         ctr: ratio(clicks, impressions),
@@ -315,19 +383,13 @@ export function buildView(raw, options = {}) {
         audSpend,
         otherSpend,
         platformBreakdown,
-        // Lead & funnel metrics
-        l1Count,
-        l2Count,
-        l3Count,
-        l4Count,
-        revenue,
-        cpl,
-        cpaL3,
-        cac,
-        roas,
-        directL1: direct.l1,
-        directL4: direct.l4,
-        directRevenue: direct.revenue
+        // Lead & funnel metrics (measured, not allocated)
+        l1Count: funnel.l1Count,
+        l2Count: funnel.l2Count,
+        l3Count: funnel.l3Count,
+        l4Count: funnel.l4Count,
+        revenue: funnel.revenue,
+        ...costs
       };
     });
 
@@ -338,12 +400,8 @@ export function buildView(raw, options = {}) {
   const products = TARGET_PRODUCTS.map(p => {
     const pCamps = targetCampaigns.filter(c => c.product === p.key);
     const pStats = aggregate(pCamps);
-    const pLeads = summarizeLeads(rawLeads, { product: p.key });
-
-    const cpl = pLeads.l1Count > 0 ? round(pStats.spend / pLeads.l1Count) : 0;
-    const cpaL3 = pLeads.l3Count > 0 ? round(pStats.spend / pLeads.l3Count) : 0;
-    const cac = pLeads.l4Count > 0 ? round(pStats.spend / pLeads.l4Count) : 0;
-    const roas = pStats.spend > 0 ? parseFloat((pLeads.revenue / pStats.spend).toFixed(2)) : 0;
+    const pLeads = withFunnelRates(leadAttr.byProduct[p.key]);
+    const costs = leadCosts(pStats.spend, pLeads);
     const convMsgToL1 = pStats.messages > 0 ? ratio(pLeads.l1Count, pStats.messages) : 0;
 
     return {
@@ -355,15 +413,14 @@ export function buildView(raw, options = {}) {
       l3Count: pLeads.l3Count,
       l4Count: pLeads.l4Count,
       revenue: pLeads.revenue,
-      cpl,
-      cpaL3,
-      cac,
-      roas,
+      ...costs,
       convMsgToL1,
       convL1toL2: pLeads.convL1toL2,
       convL2toL3: pLeads.convL2toL3,
       convL3toL4: pLeads.convL3toL4,
-      convTotal: pLeads.convTotal
+      convTotal: pLeads.convTotal,
+      unassignedL1: leadAttr.unassignedByProduct[p.key].l1Count,
+      unassignedL4: leadAttr.unassignedByProduct[p.key].l4Count
     };
   });
 
@@ -374,12 +431,12 @@ export function buildView(raw, options = {}) {
 
   const s = aggregate(viewCampaigns);
 
-  // 4. Summarize leads for currently active view / tab
-  const activeLeadSummary = summarizeLeads(rawLeads, { product: selectedProduct });
-  const activeCpl = activeLeadSummary.l1Count > 0 ? round(s.spend / activeLeadSummary.l1Count) : 0;
-  const activeCpaL3 = activeLeadSummary.l3Count > 0 ? round(s.spend / activeLeadSummary.l3Count) : 0;
-  const activeCac = activeLeadSummary.l4Count > 0 ? round(s.spend / activeLeadSummary.l4Count) : 0;
-  const activeRoas = s.spend > 0 ? parseFloat((activeLeadSummary.revenue / s.spend).toFixed(2)) : 0;
+  // 4. Funnel for the active view. Built from exactly the same buckets as the rows above,
+  //    so Σ(rows) + unassigned === summary by construction (see test/report.test.js).
+  const scopeKeys = selectedProduct === 'ALL' ? TARGET_KEYS : [selectedProduct];
+  const activeLeadSummary = withFunnelRates(sumFunnels(scopeKeys.map(k => leadAttr.byProduct[k])));
+  const unassignedLeads = withFunnelRates(sumFunnels(scopeKeys.map(k => leadAttr.unassignedByProduct[k])));
+  const activeCosts = leadCosts(s.spend, activeLeadSummary);
   const activeConvMsgToL1 = s.messages > 0 ? ratio(activeLeadSummary.l1Count, s.messages) : 0;
 
   // 5. Daily trend list sorted chronologically
@@ -413,37 +470,52 @@ export function buildView(raw, options = {}) {
     scopeName = accObj ? accObj.name : `Tài khoản ${selectedAccount}`;
   }
 
-  // Build dedicated tab data for the 4 products
-  const productTabs = {};
-  TARGET_KEYS.forEach(key => {
-    const prodObj = products.find(p => p.key === key) || {};
-    const prodCamps = targetCampaigns.filter(c => c.product === key);
-    const prodLeads = summarizeLeads(rawLeads, { product: key });
-
-    productTabs[key] = {
-      key,
-      name: prodObj.name || key.toUpperCase(),
-      stats: prodObj,
-      campaigns: prodCamps,
-      funnel: {
-        impressions: prodObj.impressions || 0,
-        clicks: prodObj.clicks || 0,
-        messages: prodObj.messages || 0,
-        l1: prodLeads.l1Count,
-        l2: prodLeads.l2Count,
-        l3: prodLeads.l3Count,
-        l4: prodLeads.l4Count
-      },
-      recentEnrolled: (prodLeads.recentEnrolled || []).map(r => ({
-        ...r,
-        phoneMasked: maskPhone(r.phone)
-      }))
+  // Lightweight badges for the 5 tabs. This replaces the old `productTabs` payload, which
+  // shipped every campaign of all 4 products (436 KB) so the UI could read four numbers.
+  const tabBadges = {};
+  for (const p of products) {
+    tabBadges[p.key] = {
+      l1Count: p.l1Count,
+      l3Count: p.l3Count,
+      l4Count: p.l4Count,
+      campaignCount: p.count,
+      activeCount: p.activeCount
     };
-  });
+  }
+
+  // Data-quality notes shown in the UI. These are facts about the snapshot, not estimates.
+  const dataNotes = [];
+  const syncWindow = raw.syncWindow || raw.datePreset || 'last_30d';
+  if (!raw.adMap) {
+    dataNotes.push({
+      level: 'warning',
+      message: 'Snapshot cũ (schema v2) chưa có bảng tra Ad ID → Chiến dịch. Bấm "Đồng bộ" để ghép lead vào từng chiến dịch.'
+    });
+  }
+  if (leadAttr.unmatchedCount > 0) {
+    dataNotes.push({
+      level: 'info',
+      message: `${leadAttr.unmatchedCount} lead trong kỳ chưa ghép được vào chiến dịch (Ad ID trống hoặc không thuộc BM). Số này nằm ở dòng "Chưa gán được nguồn", không chia vào các chiến dịch.`
+    });
+  }
+  if (selectedAccount !== 'ALL') {
+    dataNotes.push({
+      level: 'info',
+      message: 'Đang xem theo 1 tài khoản: lead chưa ghép được chiến dịch bị loại khỏi tổng, vì không xác định được thuộc tài khoản nào.'
+    });
+  }
+  if (datePreset !== syncWindow && (datePreset === 'this_month' || datePreset === 'last_30d')) {
+    dataNotes.push({
+      level: 'info',
+      message: `Snapshot chỉ chứa dữ liệu kỳ "${syncWindow}". Khoảng đang chọn có thể vượt ra ngoài vùng dữ liệu đã tải.`
+    });
+  }
 
   return {
+    schemaVersion: 4,
     fetchedAt: raw.fetchedAt,
     datePreset,
+    syncWindow,
     dateRange: { startDate, endDate },
     activeTab,
     scope: { ...raw.scope, accountId: selectedAccount, name: scopeName },
@@ -451,10 +523,20 @@ export function buildView(raw, options = {}) {
     product: selectedProduct,
     accountId: selectedAccount,
     products,
-    productTabs,
+    tabBadges,
+    /** Frequency is only measured for the sync window, so fatigue is only judged there. */
+    fatigueApplicable: datePreset === syncWindow,
+    leadAttribution: {
+      matched: leadAttr.matchedCount,
+      unmatched: leadAttr.unmatchedCount,
+      adMapSize: Object.keys(adMap).length
+    },
+    unassignedLeads,
+    dataNotes,
     summary: {
       totalSpend: s.spend,
       totalMessages: s.messages,
+      totalOtherConversions: s.otherConversions,
       avgCpa: s.cpa,
       totalImpressions: s.impressions,
       totalClicks: s.clicks,
@@ -475,10 +557,7 @@ export function buildView(raw, options = {}) {
       l3Count: activeLeadSummary.l3Count,
       l4Count: activeLeadSummary.l4Count,
       totalRevenue: activeLeadSummary.revenue,
-      cpl: activeCpl,
-      cpaL3: activeCpaL3,
-      cac: activeCac,
-      roas: activeRoas,
+      ...activeCosts,
       convMsgToL1: activeConvMsgToL1,
       convL1toL2: activeLeadSummary.convL1toL2,
       convL2toL3: activeLeadSummary.convL2toL3,
@@ -497,10 +576,7 @@ export function buildView(raw, options = {}) {
     dailyTrend,
     placements,
     campaigns: viewCampaigns,
-    recentEnrolled: (activeLeadSummary.recentEnrolled || []).map(r => ({
-      ...r,
-      phoneMasked: maskPhone(r.phone)
-    })),
+    recentEnrolled: leadAttr.enrolled.slice(0, 10).map(publicEnrolled),
     warnings: raw.warnings || []
   };
 }

@@ -38,6 +38,7 @@
   --c-uckid: #c084fc;
   --c-mathca: #fbbf24;
   --c-traihe: #34d399;
+  --c-khac: #94a3b8;
 
   /* Shape & motion */
   --radius-sm: 8px;
@@ -246,6 +247,19 @@ body.is-syncing .report-content { opacity: 0.55; pointer-events: none; transitio
 }
 .notice svg { color: var(--warning-text); flex-shrink: 0; width: 18px; height: 18px; margin-top: 2px; }
 .notice ul { margin: 4px 0 0 18px; color: var(--text-secondary); }
+
+/* Data-quality notes: statements of fact about the snapshot, not warnings. */
+.notice-info {
+  border-color: rgba(56, 189, 248, 0.28);
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.1), rgba(56, 189, 248, 0.02));
+  color: #dbeafe;
+}
+.notice-info svg { color: var(--c-ucmas); }
+
+/* Lead rows that could not be attributed to a campaign — shown, never spread around. */
+.row-unassigned { background: rgba(148, 163, 184, 0.06); }
+.row-unassigned td { border-top: 1px dashed var(--border-strong, rgba(148, 163, 184, 0.35)); }
+.prod-khac { --prod: var(--c-khac, #94a3b8); }
 
 .empty-state {
   border-radius: var(--radius-lg); padding: 56px 24px; text-align: center;

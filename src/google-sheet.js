@@ -1,8 +1,11 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { ROOT_DIR } from './config.js';
 
+/**
+ * Published-to-web CSV of the CRM sheet. Set GOOGLE_SHEET_CSV_URL in .env — the literal
+ * below is only the historical fallback so an existing install keeps working.
+ */
 export const DEFAULT_SHEET_CSV_URL =
   process.env.GOOGLE_SHEET_CSV_URL ||
   'https://docs.google.com/spreadsheets/d/e/2PACX-1vRydyFv8bQYdO4uULwFyVVzpbT_rg7Cz9tyqTFENumKK8XGFMYe033i6CjVFREO4fij0GrWBrgFslcJ/pub?gid=1036843724&single=true&output=csv';
@@ -147,17 +150,24 @@ export async function fetchGoogleSheetLeads(customUrl = null) {
     const l4U = normalizeDate(col.l4Ucmas >= 0 ? r[col.l4Ucmas] : null);
     const l4K = normalizeDate(col.l4Uckid >= 0 ? r[col.l4Uckid] : null);
 
-    // Determine target product key
-    let product = 'ucmas';
+    // Determine target product key. Starts as null ON PURPOSE: defaulting to 'ucmas'
+    // used to sweep every unrecognised row into UCMAS (998 of 1.142 leads), which
+    // inflated UCMAS and starved MATHCA. A row we cannot classify is 'khac', and
+    // report.js prefers the product of the matched campaign anyway when there is one.
+    let product = null;
+    const fanpageLower = fanpage.toLowerCase();
     if (prodRaw.includes('UCKID') || l1K || l4K) {
       product = 'uckid';
     } else if (prodRaw.includes('MATHCA')) {
       product = 'mathca';
-    } else if (fanpage.toLowerCase().includes('trại hè') || fanpage.toLowerCase().includes('mùa hè')) {
+    } else if (prodRaw.includes('TRẠI HÈ') || prodRaw.includes('TRAI HE') ||
+               fanpageLower.includes('trại hè') || fanpageLower.includes('mùa hè')) {
       product = 'traihe';
     } else if (prodRaw.includes('UCMAS') || l1U || l4U) {
       product = 'ucmas';
     }
+    const productFromSheet = product !== null;
+    if (product === null) product = 'khac';
 
     // Determine funnel dates & flags based on detected product
     const isUckid = product === 'uckid';
@@ -179,6 +189,7 @@ export async function fetchGoogleSheetLeads(customUrl = null) {
       adId: adId.trim(),
       entryDate: entryDate || l1Date,
       product,
+      productFromSheet,
       revenue,
       currentLevel,
       l1: Boolean(l1Date),
@@ -209,38 +220,73 @@ export async function fetchGoogleSheetLeads(customUrl = null) {
 }
 
 /**
- * Filter and summarize leads for a specific product and date range
+ * The single definition of which date places a lead inside a reporting period.
+ * Used by both summarizeLeads() and the aggregation engine in report.js so the two
+ * can never disagree about what "leads in the last 7 days" means.
  */
-export function summarizeLeads(leads = [], { product = 'ALL', startDate = null, endDate = null, adIdSet = null }) {
+export function leadPeriodDate(lead) {
+  return lead.l1Date || lead.entryDate || null;
+}
+
+/** True when a lead falls inside [startDate, endDate] (either bound may be null). */
+export function leadInRange(lead, startDate = null, endDate = null) {
+  if (!startDate && !endDate) return true;
+  const d = leadPeriodDate(lead);
+  // A lead with no usable date cannot be proven to be in the period — exclude it
+  // rather than silently counting it in every range.
+  if (!d) return false;
+  if (startDate && d < startDate) return false;
+  if (endDate && d > endDate) return false;
+  return true;
+}
+
+/** Empty funnel bucket. Callers accumulate into this shape. */
+export function emptyFunnel() {
+  return { totalLeads: 0, l1Count: 0, l2Count: 0, l3Count: 0, l4Count: 0, revenue: 0 };
+}
+
+/** Accumulate one lead into a bucket created by emptyFunnel(). */
+export function addLeadToFunnel(bucket, lead) {
+  bucket.totalLeads += 1;
+  if (lead.l1) bucket.l1Count += 1;
+  if (lead.l2) bucket.l2Count += 1;
+  if (lead.l3) bucket.l3Count += 1;
+  if (lead.l4) bucket.l4Count += 1;
+  bucket.revenue += lead.revenue || 0;
+  return bucket;
+}
+
+const pct = (a, b) => (b > 0 ? parseFloat(((a / b) * 100).toFixed(1)) : 0);
+
+/** Add the derived conversion rates to a funnel bucket. */
+export function withFunnelRates(bucket) {
+  return {
+    ...bucket,
+    convL1toL2: pct(bucket.l2Count, bucket.l1Count),
+    convL2toL3: pct(bucket.l3Count, bucket.l2Count),
+    convL3toL4: pct(bucket.l4Count, bucket.l3Count),
+    convTotal: pct(bucket.l4Count, bucket.l1Count)
+  };
+}
+
+/**
+ * Filter and summarize leads for a specific product and date range.
+ * Kept as a standalone utility (CLI, tests); report.js uses a single-pass engine
+ * instead so it never has to scan the lead list once per product.
+ */
+export function summarizeLeads(leads = [], options = {}) {
+  const { product = 'ALL', startDate = null, endDate = null, adIdSet = null } = options;
+
   const filtered = leads.filter(l => {
     if (product !== 'ALL' && l.product !== product) return false;
     if (adIdSet && adIdSet.size > 0 && l.adId && !adIdSet.has(l.adId)) return false;
-    // Date filter: based on lead entry date or L1 date
-    const d = l.l1Date || l.entryDate;
-    if (startDate && d && d < startDate) return false;
-    if (endDate && d && d > endDate) return false;
-    return true;
+    return leadInRange(l, startDate, endDate);
   });
 
-  const l1Count = filtered.filter(l => l.l1).length;
-  const l2Count = filtered.filter(l => l.l2).length;
-  const l3Count = filtered.filter(l => l.l3).length;
-  const l4Count = filtered.filter(l => l.l4).length;
-  const revenue = filtered.reduce((s, l) => s + (l.revenue || 0), 0);
-
-  const ratio = (a, b) => (b > 0 ? parseFloat(((a / b) * 100).toFixed(1)) : 0);
+  const bucket = filtered.reduce(addLeadToFunnel, emptyFunnel());
 
   return {
-    totalLeads: filtered.length,
-    l1Count,
-    l2Count,
-    l3Count,
-    l4Count,
-    revenue,
-    convL1toL2: ratio(l2Count, l1Count),
-    convL2toL3: ratio(l3Count, l2Count),
-    convL3toL4: ratio(l4Count, l3Count),
-    convTotal: ratio(l4Count, l1Count),
+    ...withFunnelRates(bucket),
     recentEnrolled: filtered
       .filter(l => l.l4)
       .sort((a, b) => (b.l4Date || '').localeCompare(a.l4Date || ''))

@@ -20,8 +20,18 @@ const appState = {
   sortField: 'spend',
   sortAsc: false,
   searchQuery: '',
-  statusFilter: 'ACTIVE'
+  statusFilter: 'ACTIVE',
+  /** CSRF token from GET /api/session, echoed on every mutating request. */
+  sessionToken: null,
+  /** Aborts the previous /api/data request so a slow one can't overwrite a newer one. */
+  pendingLoad: null
 };
+
+/**
+ * CPA verdict thresholds. Seeded with the backend defaults and overwritten by
+ * analysis.thresholds on the first response, so the two can never drift apart.
+ */
+let thresholds = { CPA_GOOD: 65000, CPA_OK: 90000, WASTE_HIGH_CPA: 130000 };
 
 const PRODUCT_COLORS = {
   ucmas: '#38bdf8',
@@ -52,6 +62,22 @@ const STATUS_TEXT = {
 };
 
 // Utilities
+
+/**
+ * Escape text before it goes into innerHTML. Campaign and fanpage names are typed by
+ * whoever runs the ads, and Meta error messages are echoed verbatim, so none of it can
+ * be trusted as markup — a stray `<` used to break the table outright.
+ */
+function esc(val) {
+  if (val === undefined || val === null) return '';
+  return String(val)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function formatCurrency(val, currency = 'VND') {
   if (val === undefined || val === null || isNaN(val)) return '0 ₫';
   return new Intl.NumberFormat('vi-VN', {
@@ -80,12 +106,45 @@ function showToast(message, type = 'info') {
   if (!container) return;
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
-  toast.innerHTML = `<span>${message}</span>`;
+  const span = document.createElement('span');
+  span.textContent = message; // messages can carry Meta API text — never parse as HTML
+  toast.appendChild(span);
   container.appendChild(toast);
   setTimeout(() => {
     toast.classList.add('leaving');
     setTimeout(() => toast.remove(), 300);
   }, 4000);
+}
+
+/**
+ * Fetch the same-origin session token once. Mutating endpoints reject requests without it.
+ */
+async function ensureSessionToken() {
+  if (appState.sessionToken) return appState.sessionToken;
+  const res = await fetch('/api/session');
+  if (!res.ok) throw new Error('Không lấy được phiên làm việc từ server.');
+  const json = await res.json();
+  appState.sessionToken = json.token;
+  appState.apiVersion = json.apiVersion;
+  appState.businessId = json.businessId;
+  return appState.sessionToken;
+}
+
+/** POST helper that attaches the session token. */
+async function postJson(url, body) {
+  const token = await ensureSessionToken();
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Internal-Token': token },
+    body: JSON.stringify(body || {})
+  });
+  let json = {};
+  try {
+    json = await res.json();
+  } catch {
+    throw new Error(`Server trả về dữ liệu không hợp lệ (HTTP ${res.status}).`);
+  }
+  return { res, json };
 }
 
 function refreshIcons() {
@@ -97,6 +156,7 @@ function refreshIcons() {
 // Lifecycle Init
 document.addEventListener('DOMContentLoaded', () => {
   initEventListeners();
+  ensureSessionToken().catch(err => console.warn('[Session]', err.message));
   loadData();
 });
 
@@ -114,6 +174,12 @@ function initEventListeners() {
   const syncBtn = document.getElementById('syncBtn');
   if (syncBtn) {
     syncBtn.addEventListener('click', () => triggerSync());
+  }
+
+  // Sheet-only refresh — skips the Meta API entirely (~0.3s instead of ~10s)
+  const syncSheetBtn = document.getElementById('syncSheetBtn');
+  if (syncSheetBtn) {
+    syncSheetBtn.addEventListener('click', () => triggerSheetSync());
   }
 
   // Account select (100% Local slicing)
@@ -230,12 +296,9 @@ function initEventListeners() {
       saveBtn.innerHTML = '<span>Đang lưu...</span>';
 
       try {
-        const res = await fetch('/api/save-config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accessToken: token, appId, appSecret, sheetUrl })
+        const { res, json: result } = await postJson('/api/save-config', {
+          accessToken: token, appId, appSecret, sheetUrl
         });
-        const result = await res.json();
         if (res.ok && result.success) {
           alertBox.className = 'alert-box alert-success';
           alertBox.textContent = 'Đã lưu cấu hình thành công! Đang đồng bộ dữ liệu...';
@@ -289,13 +352,21 @@ function updateActiveTabUI() {
  * Load sliced view from Local Data Lake in < 5ms (100% Offline / Local)
  */
 async function loadData() {
-  const p = encodeURIComponent(appState.selectedProduct || 'ALL');
-  const a = encodeURIComponent(appState.selectedAccount || 'ALL');
-  const d = encodeURIComponent(appState.selectedDatePreset || 'last_30d');
-  const tab = encodeURIComponent(appState.activeTab || 'all');
+  const params = new URLSearchParams({
+    product: appState.selectedProduct || 'ALL',
+    accountId: appState.selectedAccount || 'ALL',
+    datePreset: appState.selectedDatePreset || 'last_30d',
+    tab: appState.activeTab || 'all'
+  });
+
+  // Cancel any request still in flight: changing account → date → product in quick
+  // succession used to render whichever response happened to land last.
+  if (appState.pendingLoad) appState.pendingLoad.abort();
+  const controller = new AbortController();
+  appState.pendingLoad = controller;
 
   try {
-    const res = await fetch(`/api/data?product=${p}&accountId=${a}&datePreset=${d}&tab=${tab}`);
+    const res = await fetch(`/api/data?${params}`, { signal: controller.signal });
     const json = await res.json();
 
     if (json.needsConfig) {
@@ -307,55 +378,52 @@ async function loadData() {
       return;
     }
 
-    hideEmptyState();
-    appState.view = json.view;
-    appState.analysis = json.analysis;
-    appState.selectedProduct = json.view.product || 'ALL';
-    appState.selectedAccount = json.view.accountId || 'ALL';
-    appState.selectedDatePreset = json.view.datePreset || 'last_30d';
-
-    renderAll();
+    applyPayload(json);
   } catch (err) {
+    if (err.name === 'AbortError') return; // superseded by a newer filter change
     console.error('Lỗi tải dữ liệu local:', err);
     showToast('Lỗi khi tải dữ liệu: ' + err.message, 'error');
+  } finally {
+    if (appState.pendingLoad === controller) appState.pendingLoad = null;
   }
 }
 
-/**
- * Switch product filter locally
- */
-async function selectProduct(productKey) {
-  switchTab(productKey === 'ALL' ? 'all' : productKey);
+/** Adopt a {view, analysis} payload and repaint everything. */
+function applyPayload(json) {
+  hideEmptyState();
+  appState.view = json.view;
+  appState.analysis = json.analysis;
+  appState.selectedProduct = json.view.product || 'ALL';
+  appState.selectedAccount = json.view.accountId || 'ALL';
+  appState.selectedDatePreset = json.view.datePreset || 'last_30d';
+  if (json.analysis?.thresholds) thresholds = json.analysis.thresholds;
+  renderAll();
+}
+
+/** Shared chrome for the two sync buttons. */
+function setSyncing(on, btnId, iconId) {
+  const btn = document.getElementById(btnId);
+  const icon = document.getElementById(iconId);
+  document.body.classList.toggle('is-syncing', on);
+  if (btn) btn.disabled = on;
+  if (icon) icon.classList.toggle('spin', on);
 }
 
 /**
  * Trigger fresh sync from Meta API & Google Sheet
  */
 async function triggerSync() {
-  const syncBtn = document.getElementById('syncBtn');
-  const syncIcon = document.getElementById('syncIcon');
-  document.body.classList.add('is-syncing');
-  if (syncBtn) syncBtn.disabled = true;
-  if (syncIcon) syncIcon.classList.add('spin');
-
+  setSyncing(true, 'syncBtn', 'syncIcon');
   try {
-    const res = await fetch('/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        datePreset: appState.selectedDatePreset,
-        accountId: appState.selectedAccount,
-        productFilter: appState.selectedProduct,
-        activeTab: appState.activeTab
-      })
+    const { res, json: result } = await postJson('/api/sync', {
+      datePreset: appState.selectedDatePreset,
+      accountId: appState.selectedAccount,
+      productFilter: appState.selectedProduct,
+      activeTab: appState.activeTab
     });
-    const result = await res.json();
 
     if (res.ok && result.success) {
-      hideEmptyState();
-      appState.view = result.view;
-      appState.analysis = result.analysis;
-      renderAll();
+      applyPayload(result);
       showToast(result.message || 'Đồng bộ dữ liệu thành công!', result.metaWarning ? 'warning' : 'success');
     } else {
       showToast('Không thể đồng bộ: ' + (result.error || 'Lỗi không xác định'), 'error');
@@ -363,9 +431,33 @@ async function triggerSync() {
   } catch (err) {
     showToast('Lỗi kết nối khi đồng bộ: ' + err.message, 'error');
   } finally {
-    document.body.classList.remove('is-syncing');
-    if (syncBtn) syncBtn.disabled = false;
-    if (syncIcon) syncIcon.classList.remove('spin');
+    setSyncing(false, 'syncBtn', 'syncIcon');
+  }
+}
+
+/**
+ * Refresh only the Google Sheet leads — no Meta API call, so it returns in ~0.3s.
+ */
+async function triggerSheetSync() {
+  setSyncing(true, 'syncSheetBtn', 'syncSheetIcon');
+  try {
+    const { res, json: result } = await postJson('/api/sync-sheet', {
+      product: appState.selectedProduct,
+      accountId: appState.selectedAccount,
+      datePreset: appState.selectedDatePreset,
+      activeTab: appState.activeTab
+    });
+
+    if (res.ok && result.success) {
+      applyPayload(result);
+      showToast(result.message || 'Đã làm mới dữ liệu Google Sheet!', 'success');
+    } else {
+      showToast('Không thể làm mới Google Sheet: ' + (result.error || 'Lỗi không xác định'), 'error');
+    }
+  } catch (err) {
+    showToast('Lỗi kết nối khi làm mới Google Sheet: ' + err.message, 'error');
+  } finally {
+    setSyncing(false, 'syncSheetBtn', 'syncSheetIcon');
   }
 }
 
@@ -422,17 +514,21 @@ function updateHeaderAndBadges() {
   if (badge) badge.className = 'account-badge badge-live';
   if (badgeText) badgeText.textContent = `Snapshot lúc ${dateStr} • Local Data Lake`;
 
-  // Update Tab Badges (Showing L4 count or campaigns)
-  const tabs = view.productTabs || {};
-  const badgeUcmas = document.getElementById('tabBadgeUcmas');
-  const badgeUckid = document.getElementById('tabBadgeUckid');
-  const badgeMathca = document.getElementById('tabBadgeMathca');
-  const badgeTraihe = document.getElementById('tabBadgeTraihe');
-
-  if (badgeUcmas && tabs.ucmas) badgeUcmas.textContent = `${tabs.ucmas.stats?.l4Count || 0} L4`;
-  if (badgeUckid && tabs.uckid) badgeUckid.textContent = `${tabs.uckid.stats?.l4Count || 0} L4`;
-  if (badgeMathca && tabs.mathca) badgeMathca.textContent = `${tabs.mathca.stats?.l1Count || tabs.mathca.campaigns?.length || 0} tin`;
-  if (badgeTraihe && tabs.traihe) badgeTraihe.textContent = `${tabs.traihe.campaigns?.length || 0} CĐ`;
+  // Update tab badges from the lightweight `tabBadges` payload (used to require shipping
+  // every campaign of all 4 products just to read these numbers).
+  const badges = view.tabBadges || {};
+  const badgeIds = {
+    ucmas: 'tabBadgeUcmas',
+    uckid: 'tabBadgeUckid',
+    mathca: 'tabBadgeMathca',
+    traihe: 'tabBadgeTraihe'
+  };
+  Object.entries(badgeIds).forEach(([key, id]) => {
+    const el = document.getElementById(id);
+    const b = badges[key];
+    if (!el || !b) return;
+    el.textContent = b.l4Count > 0 ? `${formatNumber(b.l4Count)} L4` : `${formatNumber(b.campaignCount || 0)} CĐ`;
+  });
 
   // Account select options
   const accountSelect = document.getElementById('accountSelect');
@@ -441,7 +537,7 @@ function updateHeaderAndBadges() {
     let html = `<option value="ALL">🏢 Toàn BM Ucmas Việt Nam (${view.bmAccounts.length} tài khoản)</option>`;
     view.bmAccounts.forEach(acc => {
       const isSelected = acc.numericId === currentVal ? 'selected' : '';
-      html += `<option value="${acc.numericId}" ${isSelected}>📊 ${acc.name} (${acc.id})</option>`;
+      html += `<option value="${esc(acc.numericId)}" ${isSelected}>📊 ${esc(acc.name)} (${esc(acc.id)})</option>`;
     });
     accountSelect.innerHTML = html;
   }
@@ -457,29 +553,55 @@ function updateHeaderAndBadges() {
   // Footer info
   const footerInfo = document.getElementById('footerInfo');
   if (footerInfo) {
-    footerInfo.textContent = `BM Ucmas Việt Nam (${view.scope?.businessId || '2590933284556026'}) • Graph API v21.0 • Google Sheets CRM • ${view.summary.campaignCount} chiến dịch • Chế độ Offline-First`;
+    const bm = view.scope?.businessId || appState.businessId || '—';
+    const api = appState.apiVersion || '—';
+    const attr = view.leadAttribution || {};
+    footerInfo.textContent =
+      `BM Ucmas Việt Nam (${bm}) • Graph API ${api} • Google Sheets CRM • ` +
+      `${view.summary.campaignCount} chiến dịch • ${formatNumber(attr.matched || 0)} lead đã ghép / ` +
+      `${formatNumber(attr.unmatched || 0)} chưa ghép • Chế độ Offline-First`;
   }
 }
 
 function renderNotices() {
   const container = document.getElementById('noticeArea');
   if (!container) return;
-  const warnings = appState.view?.warnings || [];
-  if (warnings.length === 0) {
+  const view = appState.view || {};
+  const warnings = view.warnings || [];
+  const notes = view.dataNotes || [];
+
+  if (warnings.length === 0 && notes.length === 0) {
     container.innerHTML = '';
     return;
   }
-  container.innerHTML = `
-    <div class="notice">
-      <i data-lucide="alert-triangle"></i>
-      <div>
-        <strong>Cảnh báo đồng bộ Meta API:</strong>
-        <ul>
-          ${warnings.map(w => `<li>[${w.account}] ${w.step}: ${w.message}</li>`).join('')}
-        </ul>
+
+  let html = '';
+
+  if (warnings.length > 0) {
+    html += `
+      <div class="notice">
+        <i data-lucide="alert-triangle"></i>
+        <div>
+          <strong>Cảnh báo đồng bộ Meta API:</strong>
+          <ul>
+            ${warnings.map(w => `<li>[${esc(w.account)}] ${esc(w.step)}: ${esc(w.message)}</li>`).join('')}
+          </ul>
+        </div>
       </div>
-    </div>
-  `;
+    `;
+  }
+
+  // Data-quality notes: facts about what the snapshot can and cannot prove.
+  notes.forEach(n => {
+    html += `
+      <div class="notice notice-${esc(n.level || 'info')}">
+        <i data-lucide="${n.level === 'warning' ? 'alert-triangle' : 'info'}"></i>
+        <div><span>${esc(n.message)}</span></div>
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
 }
 
 function renderAiHero() {
@@ -573,10 +695,10 @@ function renderKpis() {
     if (s.totalMessages === 0) {
       kpiCpaVerdict.textContent = 'Chưa có tin';
       kpiCpaVerdict.className = 'kpi-badge tone-neutral';
-    } else if (s.avgCpa <= 65000) {
+    } else if (s.avgCpa <= thresholds.CPA_GOOD) {
       kpiCpaVerdict.textContent = 'CPA rất tốt';
       kpiCpaVerdict.className = 'kpi-badge tone-success';
-    } else if (s.avgCpa <= 90000) {
+    } else if (s.avgCpa <= thresholds.CPA_OK) {
       kpiCpaVerdict.textContent = 'CPA chuẩn';
       kpiCpaVerdict.className = 'kpi-badge tone-primary';
     } else {
@@ -630,11 +752,11 @@ function renderProductCards() {
     const pacing = Math.min(100, Math.max(0, p.pacingPct || 0));
 
     html += `
-      <button type="button" class="product-card prod-${p.key}" data-tab="${p.key}">
+      <button type="button" class="product-card prod-${esc(p.key)}" data-tab="${esc(p.key)}">
         <div class="product-card-header">
           <div>
-            <div class="product-name">${p.name}</div>
-            <div class="product-subtitle">${p.subtitle}</div>
+            <div class="product-name">${esc(p.name)}</div>
+            <div class="product-subtitle">${esc(p.subtitle)}</div>
           </div>
           <span class="product-count">${p.count} CĐ (${p.activeCount} chạy)</span>
         </div>
@@ -858,8 +980,8 @@ function renderEnrolledStudents() {
     html += `
       <div class="enrolled-card">
         <div>
-          <div class="enrolled-phone">📱 ${item.phoneMasked}</div>
-          <div class="enrolled-date">Ngày chốt: <strong>${item.l4Date || item.entryDate}</strong> • ${item.fanpage || 'Trang chính'}</div>
+          <div class="enrolled-phone">📱 ${esc(item.phoneMasked)}</div>
+          <div class="enrolled-date">Ngày chốt: <strong>${esc(item.l4Date || item.entryDate || '—')}</strong> • ${esc(item.fanpage || 'Trang chính')}</div>
         </div>
         <div class="text-right">
           <span class="badge-level badge-l4">Đã chốt L4</span>
@@ -985,26 +1107,30 @@ function renderRecommendations() {
   const recs = analysis.recommendations || [];
 
   insightContainer.innerHTML = recs.map(r => `
-    <div class="insight-item type-${r.type || 'info'}">
-      <strong>${r.title}</strong>
-      <span>${r.message}</span>
+    <div class="insight-item type-${esc(r.type || 'info')}">
+      <strong>${esc(r.title)}</strong>
+      <span>${esc(r.message)}</span>
     </div>
   `).join('');
 
   const cards = [];
+  const prodBadge = (item) => {
+    const key = (item.product || '').toLowerCase() || 'khac';
+    return `<span class="product-badge prod-${esc(key)}">${esc(item.product || '')}</span>`;
+  };
 
   (analysis.topPerformers || []).slice(0, 4).forEach(item => {
     cards.push(`
       <div class="rec-card">
         <div class="rec-card-header">
           <span class="rec-badge tone-success">Scale ngân sách</span>
-          <span class="product-badge prod-${item.product?.toLowerCase() || 'ucmas'}">${item.product || ''}</span>
+          ${prodBadge(item)}
         </div>
-        <div class="rec-item-title">${item.name}</div>
-        <div class="rec-item-meta">${item.accountName} • ${formatNumber(item.messages)} tin • CPA: ${formatCurrency(item.cpa)}</div>
+        <div class="rec-item-title">${esc(item.name)}</div>
+        <div class="rec-item-meta">${esc(item.accountName)} • ${formatNumber(item.messages)} tin • CPA: ${formatCurrency(item.cpa)}</div>
         <div class="rec-item-desc">Chiến dịch tạo nhiều tin nhắn với chi phí rất tối ưu.</div>
         <div class="rec-item-action text-success">
-          <i data-lucide="arrow-up-right"></i> ${item.advice}
+          <i data-lucide="arrow-up-right"></i> ${esc(item.advice)}
         </div>
       </div>
     `);
@@ -1015,13 +1141,13 @@ function renderRecommendations() {
       <div class="rec-card">
         <div class="rec-card-header">
           <span class="rec-badge tone-danger">Cần rà soát</span>
-          <span class="product-badge prod-${item.product?.toLowerCase() || 'ucmas'}">${item.product || ''}</span>
+          ${prodBadge(item)}
         </div>
-        <div class="rec-item-title">${item.name}</div>
-        <div class="rec-item-meta">${item.accountName} • Đã chi: ${formatCurrency(item.spend)}</div>
-        <div class="rec-item-desc">${item.reason}</div>
+        <div class="rec-item-title">${esc(item.name)}</div>
+        <div class="rec-item-meta">${esc(item.accountName)} • Đã chi: ${formatCurrency(item.spend)}</div>
+        <div class="rec-item-desc">${esc(item.reason)}</div>
         <div class="rec-item-action text-danger">
-          <i data-lucide="pause-circle"></i> ${item.action}
+          <i data-lucide="pause-circle"></i> ${esc(item.action)}
         </div>
       </div>
     `);
@@ -1032,11 +1158,11 @@ function renderRecommendations() {
       <div class="rec-card">
         <div class="rec-card-header">
           <span class="rec-badge tone-warning">Bão hòa Creative</span>
-          <span class="product-badge prod-${item.product?.toLowerCase() || 'ucmas'}">${item.product || ''}</span>
+          ${prodBadge(item)}
         </div>
-        <div class="rec-item-title">${item.name}</div>
-        <div class="rec-item-meta">${item.accountName} • Tần suất: ${item.frequency.toFixed(2)}</div>
-        <div class="rec-item-desc">${item.advice}</div>
+        <div class="rec-item-title">${esc(item.name)}</div>
+        <div class="rec-item-meta">${esc(item.accountName)} • Tần suất: ${(item.frequency || 0).toFixed(2)}</div>
+        <div class="rec-item-desc">${esc(item.advice)}</div>
         <div class="rec-item-action text-warning">
           <i data-lucide="refresh-cw"></i> Thay mới Creative / mở rộng tệp
         </div>
@@ -1069,7 +1195,7 @@ function renderPlatformTags(c) {
         else if (p.platform === 'messenger') cls = 'plat-msg';
         else if (p.platform === 'audience_network') cls = 'plat-aud';
         else if (p.platform === 'other') cls = 'plat-other';
-        return `<span class="plat-badge ${cls}" title="${p.label}: ${formatCurrency(p.spend)} (${p.pct}%)"><strong>${p.short}:</strong> ${formatCompactNumber(p.spend)}</span>`;
+        return `<span class="plat-badge ${cls}" title="${esc(p.label)}: ${formatCurrency(p.spend)} (${p.pct}%)"><strong>${esc(p.short)}:</strong> ${formatCompactNumber(p.spend)}</span>`;
       }).join('')}
     </div>
   `;
@@ -1099,24 +1225,24 @@ function renderTable() {
     return true;
   });
 
-  // 2. Sort
+  // 2. Sort. Values are coerced first: sorting a column where some rows are missing a
+  // value used to throw inside localeCompare.
   const field = appState.sortField;
   const asc = appState.sortAsc ? 1 : -1;
+  const STRING_FIELDS = ['name', 'productLabel', 'accountName', 'effective_status', 'recommendation', 'budgetType'];
   filtered.sort((a, b) => {
-    let va = a[field];
-    let vb = b[field];
-    if (typeof va === 'string') return asc * va.localeCompare(vb);
-    return asc * ((va || 0) - (vb || 0));
+    if (STRING_FIELDS.includes(field)) {
+      return asc * String(a[field] ?? '').localeCompare(String(b[field] ?? ''), 'vi');
+    }
+    return asc * ((Number(a[field]) || 0) - (Number(b[field]) || 0));
   });
 
-  // Update table header sort indicators
+  // Update table header sort indicators (toggle only — assigning className wiped the
+  // alignment classes the layout depends on).
   document.querySelectorAll('#campaignsDataTable th[data-sort]').forEach(th => {
-    const f = th.getAttribute('data-sort');
-    if (f === field) {
-      th.className = `sorted ${appState.sortAsc ? 'asc' : ''} ${th.classList.contains('text-right') ? 'text-right' : ''} ${th.classList.contains('text-center') ? 'text-center' : ''}`;
-    } else {
-      th.classList.remove('sorted', 'asc');
-    }
+    const isActive = th.getAttribute('data-sort') === field;
+    th.classList.toggle('sorted', isActive);
+    th.classList.toggle('asc', isActive && appState.sortAsc);
   });
 
   if (countBadge) countBadge.textContent = `${filtered.length} chiến dịch`;
@@ -1139,7 +1265,9 @@ function renderTable() {
 
     const statusPillClass = c.effective_status === 'ACTIVE' ? 'tone-success' : 'tone-neutral';
     const statusLabel = STATUS_TEXT[c.effective_status] || c.effective_status;
-    const cpaClass = c.messages > 0 && c.cpa <= 65000 ? 'text-success' : (c.cpa > 130000 ? 'text-danger' : '');
+    const cpaClass = c.messages > 0 && c.cpa <= thresholds.CPA_GOOD
+      ? 'text-success'
+      : (c.cpa > thresholds.WASTE_HIGH_CPA ? 'text-danger' : '');
 
     const l1Html = c.l1Count > 0
       ? `<span class="camp-l1-val">${formatNumber(c.l1Count)}</span><span class="sub-stat">${formatCurrency(c.cpl)}/số</span>`
@@ -1162,17 +1290,17 @@ function renderTable() {
     html += `
       <tr>
         <td>
-          <div class="camp-name">${c.name}</div>
-          <div class="camp-id">ID: ${c.id}</div>
+          <div class="camp-name">${esc(c.name)}</div>
+          <div class="camp-id">ID: ${esc(c.id)}</div>
         </td>
         <td>
-          <span class="product-badge prod-${c.product}">${c.productLabel || c.product}</span>
+          <span class="product-badge prod-${esc(c.product)}">${esc(c.productLabel || c.product)}</span>
         </td>
         <td>
-          <span class="account-tag">${c.accountName}</span>
+          <span class="account-tag">${esc(c.accountName)}</span>
         </td>
         <td>
-          <span class="pill ${statusPillClass}">${statusLabel}</span>
+          <span class="pill ${statusPillClass}">${esc(statusLabel)}</span>
         </td>
         <td class="num text-success">
           ${c.expectedDailyBudget > 0 ? formatCurrency(c.expectedDailyBudget) : '<span class="text-muted">–</span>'}
@@ -1214,5 +1342,40 @@ function renderTable() {
     `;
   });
 
+  html += renderUnassignedRow();
   tbody.innerHTML = html;
+}
+
+/**
+ * Leads whose Ad ID could not be resolved to a campaign get their own labelled row
+ * instead of being spread across campaigns by spend weight. This is what makes
+ * "Σ các dòng = tổng KPI" hold while staying honest about what was actually measured.
+ */
+function renderUnassignedRow() {
+  const u = appState.view?.unassignedLeads;
+  if (!u || u.totalLeads === 0) return '';
+
+  return `
+    <tr class="row-unassigned">
+      <td>
+        <div class="camp-name text-muted">Chưa gán được nguồn</div>
+        <div class="camp-id">${formatNumber(u.totalLeads)} lead có Ad ID trống hoặc không thuộc BM</div>
+      </td>
+      <td><span class="product-badge prod-khac">—</span></td>
+      <td><span class="account-tag">—</span></td>
+      <td><span class="pill tone-neutral">Không rõ CĐ</span></td>
+      <td class="num"><span class="text-muted">–</span></td>
+      <td class="num"><span class="text-muted">–</span></td>
+      <td class="num"><span class="text-muted">–</span></td>
+      <td class="num"><span class="text-muted">–</span></td>
+      <td class="num"><span class="text-muted">–</span></td>
+      <td class="num"><span class="camp-l1-val">${formatNumber(u.l1Count)}</span></td>
+      <td class="num"><span class="camp-l3-val">${formatNumber(u.l3Count)}</span></td>
+      <td class="num"><span class="camp-l4-val">${formatNumber(u.l4Count)}</span></td>
+      <td class="num"><span class="camp-rev-val">${u.revenue > 0 ? formatCurrency(u.revenue) : '–'}</span></td>
+      <td><span class="text-muted">–</span></td>
+      <td class="num"><span class="text-muted">–</span></td>
+      <td class="text-center"><span class="pill tone-neutral">Cần map Ad ID</span></td>
+    </tr>
+  `;
 }

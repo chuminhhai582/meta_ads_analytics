@@ -73,9 +73,13 @@
           <option value="today">Hôm nay</option>
         </select>
 
-        <button id="syncBtn" class="btn btn-primary" title="Đồng bộ dữ liệu mới nhất từ Meta">
+        <button id="syncBtn" class="btn btn-primary" title="Đồng bộ dữ liệu mới nhất từ Meta Ads + Google Sheet (~10 giây)">
           <i data-lucide="refresh-cw" id="syncIcon"></i>
           <span>Đồng bộ</span>
+        </button>
+
+        <button id="syncSheetBtn" class="btn btn-icon" title="Chỉ làm mới lead từ Google Sheet (~0,3 giây, không gọi Meta API)" aria-label="Làm mới Google Sheet">
+          <i data-lucide="table-2" id="syncSheetIcon"></i>
         </button>
 
         <button id="openConfigBtn" class="btn btn-icon" title="Cài đặt Token" aria-label="Cài đặt Token">

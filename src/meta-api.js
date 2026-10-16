@@ -112,10 +112,16 @@ async function mapWithConcurrency(items, limit, fn) {
 }
 
 /**
- * Extract the primary conversion (messages → leads → purchases) from insights actions.
- * Business model = messaging/lead generation, so messages are the main KPI.
+ * Split the conversions reported by Meta into two SEPARATE counters.
+ *
+ * `messages` is the business's primary KPI (messaging / lead generation) and is the only
+ * thing CPA is computed from. Form leads and purchases are kept apart in
+ * `otherConversions` — they used to be folded into the same number, which made CPA mean
+ * different things on different campaigns while still being summed together.
+ *
+ * @returns {{ messages: number, otherConversions: number }}
  */
-function extractMessages(actions = []) {
+export function extractConversions(actions = []) {
   let messages = 0, connections = 0, leads = 0, purchases = 0;
   if (Array.isArray(actions)) {
     for (const a of actions) {
@@ -130,7 +136,10 @@ function extractMessages(actions = []) {
       }
     }
   }
-  return messages || connections || leads || purchases;
+  return {
+    messages: messages || connections,
+    otherConversions: Math.max(leads, purchases)
+  };
 }
 
 /**
@@ -197,22 +206,27 @@ async function fetchAccountData(acc, datePreset) {
   };
 
   const insightFields = 'campaign_id,spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,actions';
-  const [campaigns, adsets, insights, todayInsights, daily, placements] = await Promise.all([
+  const [campaigns, adsets, ads, insights, daily, placements] = await Promise.all([
     safe('campaigns', callGraphApiAll(`${ep}/campaigns`, {
       fields: 'id,name,status,effective_status,objective,daily_budget,lifetime_budget,start_time', limit: 200
     })),
     safe('adsets', callGraphApiAll(`${ep}/adsets`, {
       fields: 'id,campaign_id,effective_status,daily_budget', limit: 500
     })),
+    // Ad-level ids ONLY, to build the adId → campaignId lookup the CRM sheet needs.
+    // The sheet's "Ad ID" column holds AD ids; without this map a lead can never be
+    // attributed to the campaign that produced it.
+    safe('ads', callGraphApiAll(`${ep}/ads`, {
+      fields: 'id,campaign_id', limit: 500
+    })),
     safe('insights', callGraphApiAll(`${ep}/insights`, {
       level: 'campaign', date_preset: datePreset, fields: insightFields, limit: 500
     })),
-    safe('insights_today', callGraphApiAll(`${ep}/insights`, {
-      level: 'campaign', date_preset: 'today', fields: 'campaign_id,spend,actions', limit: 500
-    })),
+    // Granular per-day rows. Today's figures are derived from these, so the separate
+    // date_preset=today call this module used to make was pure duplication.
     safe('insights_daily', callGraphApiAll(`${ep}/insights`, {
       level: 'campaign', date_preset: datePreset, time_increment: 1,
-      fields: 'campaign_id,date_start,spend,impressions,clicks,actions', limit: 500
+      fields: 'campaign_id,date_start,spend,impressions,reach,clicks,actions', limit: 500
     })),
     safe('insights_placement', callGraphApiAll(`${ep}/insights`, {
       level: 'campaign', date_preset: datePreset, breakdowns: 'publisher_platform',
@@ -220,11 +234,11 @@ async function fetchAccountData(acc, datePreset) {
     }))
   ]);
 
-  return { acc, campaigns, adsets, insights, todayInsights, daily, placements, warnings };
+  return { acc, campaigns, adsets, ads, insights, daily, placements, warnings };
 }
 
 /** Merge one account's raw API rows into normalized campaign objects + aggregates. */
-function normalizeAccount({ acc, campaigns, adsets, insights, todayInsights, daily, placements }) {
+function normalizeAccount({ acc, campaigns, adsets, ads, insights, daily, placements }) {
   // ABO budget: sum daily_budget of ad sets that are REALLY delivering
   const aboBudget = new Map();
   for (const a of adsets) {
@@ -233,17 +247,15 @@ function normalizeAccount({ acc, campaigns, adsets, insights, todayInsights, dai
     }
   }
   const insMap = new Map(insights.map(i => [i.campaign_id, i]));
-  const todayMap = new Map(todayInsights.map(i => [i.campaign_id, i]));
 
   const productOf = new Map();
   const result = campaigns.map(camp => {
     const ins = insMap.get(camp.id) || {};
-    const today = todayMap.get(camp.id) || {};
     const prod = detectProduct(camp.name);
     productOf.set(camp.id, prod.key);
 
     const spend = parseFloat(ins.spend || 0);
-    const messages = extractMessages(ins.actions);
+    const { messages, otherConversions } = extractConversions(ins.actions);
     const isRunning = camp.effective_status === 'ACTIVE';
     const cbo = parseInt(camp.daily_budget, 10) || 0;
     const expectedDailyBudget = isRunning ? (cbo > 0 ? cbo : (aboBudget.get(camp.id) || 0)) : 0;
@@ -267,25 +279,38 @@ function normalizeAccount({ acc, campaigns, adsets, insights, todayInsights, dai
       ctr: parseFloat(ins.ctr || 0),
       cpc: parseFloat(ins.cpc || 0),
       cpm: parseFloat(ins.cpm || 0),
+      // Frequency of the SYNC WINDOW only (impressions/reach cannot be re-derived for a
+      // shorter range, because reach is de-duplicated). report.js therefore only lets the
+      // fatigue rule fire when the view's range equals this window.
       frequency: parseFloat(ins.frequency || 0),
       messages,
-      cpa: messages > 0 ? Math.round(spend / messages) : 0,
-      todaySpend: parseFloat(today.spend || 0),
-      todayMessages: extractMessages(today.actions)
+      otherConversions,
+      cpa: messages > 0 ? Math.round(spend / messages) : 0
     };
   });
 
+  // adId → campaignId, restricted to campaigns that really exist in this account.
+  const adMap = {};
+  for (const ad of ads) {
+    if (ad.id && ad.campaign_id) adMap[ad.id] = ad.campaign_id;
+  }
+
   // Daily rows with campaign and account linkage
-  const dailyRows = daily.map(d => ({
-    campaignId: d.campaign_id,
-    accountId: acc.numericId,
-    product: productOf.get(d.campaign_id) || 'khac', // deleted campaigns → 'khac'
-    date: d.date_start,
-    spend: parseFloat(d.spend || 0),
-    impressions: parseInt(d.impressions || 0, 10),
-    clicks: parseInt(d.clicks || 0, 10),
-    messages: extractMessages(d.actions)
-  }));
+  const dailyRows = daily.map(d => {
+    const { messages, otherConversions } = extractConversions(d.actions);
+    return {
+      campaignId: d.campaign_id,
+      accountId: acc.numericId,
+      product: productOf.get(d.campaign_id) || 'khac', // deleted campaigns → 'khac'
+      date: d.date_start,
+      spend: parseFloat(d.spend || 0),
+      impressions: parseInt(d.impressions || 0, 10),
+      reach: parseInt(d.reach || 0, 10),
+      clicks: parseInt(d.clicks || 0, 10),
+      messages,
+      otherConversions
+    };
+  });
 
   const placementRows = placements.map(p => ({
     campaignId: p.campaign_id,
@@ -296,7 +321,7 @@ function normalizeAccount({ acc, campaigns, adsets, insights, todayInsights, dai
     impressions: parseInt(p.impressions || 0, 10)
   }));
 
-  return { campaigns: result, dailyRows, placementRows };
+  return { campaigns: result, dailyRows, placementRows, adMap };
 }
 
 /** Aggregate rows into { productKey: [...] } maps. */
@@ -348,11 +373,13 @@ export async function fetchRawReport(accountId = 'ALL', datePreset = 'last_30d')
   const accountResults = await mapWithConcurrency(targets, ACCOUNT_CONCURRENCY, acc => fetchAccountData(acc, datePreset));
 
   const campaigns = [], dailyRows = [], placementRows = [], warnings = [];
+  const adMap = {};
   for (const res of accountResults) {
     const n = normalizeAccount(res);
     campaigns.push(...n.campaigns);
     dailyRows.push(...n.dailyRows);
     placementRows.push(...n.placementRows);
+    Object.assign(adMap, n.adMap);
     warnings.push(...res.warnings);
   }
 
@@ -360,15 +387,20 @@ export async function fetchRawReport(accountId = 'ALL', datePreset = 'last_30d')
     ? `Toàn BM Ucmas Việt Nam (${bmAccounts.length} tài khoản)`
     : targets[0].name;
 
-  console.log(`[Meta Ads API] Xong ${campaigns.length} chiến dịch trong ${((Date.now() - started) / 1000).toFixed(1)}s. Cảnh báo: ${warnings.length}`);
+  console.log(`[Meta Ads API] Xong ${campaigns.length} chiến dịch, ${Object.keys(adMap).length} quảng cáo trong ${((Date.now() - started) / 1000).toFixed(1)}s. Cảnh báo: ${warnings.length}`);
 
   return {
-    version: 2,
+    version: 3,
     fetchedAt: new Date().toISOString(),
     datePreset,
+    /** Range the snapshot actually covers — the sync always pulls `datePreset`, and
+     *  report.js refuses to slice a range wider than this instead of under-reporting. */
+    syncWindow: datePreset,
     scope: { businessId: config.businessId, accountId: isAll ? 'ALL' : targets[0].numericId, name: scopeName, currency: targets[0].currency || 'VND' },
     bmAccounts,
     campaigns,
+    /** adId → campaignId, for attributing Google Sheet CRM leads (schema v3). */
+    adMap,
     dailyRecords: dailyRows,
     placementRecords: placementRows,
     dailyByProduct: groupDaily(dailyRows),

@@ -10,7 +10,7 @@ Hệ thống quản lý, trích xuất dữ liệu và phân tích quảng cáo 
 
 1. **Kết Nối Meta Marketing API Với Phân Trang Toàn Diện (`src/meta-api.js`)**:
    - Tự động duyệt hết `paging.next` trên tất cả 10 tài khoản thuộc BM `2590933284556026`.
-   - Quét đồng thời toàn bộ 618+ chiến dịch, nhóm quảng cáo và chỉ số hiệu quả thực tế chỉ trong ~9.6 giây.
+   - Quét đồng thời toàn bộ ~600 chiến dịch, nhóm quảng cáo, quảng cáo và chỉ số hiệu quả thực tế trong ~10 giây.
    - Không có dữ liệu giả lập/demo — 100% số liệu được lấy trực tiếp từ Graph API.
 
 2. **Phân Tích 2 Chiều: Theo Tài Khoản & 4 Sản Phẩm Trọng Điểm**:
@@ -60,18 +60,22 @@ Local_phantich_ads/
 │   ├── css/style.css               # Hệ thống design system Dark Glassmorphism
 │   └── js/app.js                   # Logic ứng dụng client & Chart.js
 ├── src/
-│   ├── config.js                   # Quản lý .env và cập nhật an toàn
+│   ├── config.js                   # Quản lý .env, validate đầu vào, token phiên
 │   ├── meta-api.js                 # Client Graph API với phân trang toàn diện
+│   ├── google-sheet.js             # Kéo & chuẩn hoá lead CRM từ Google Sheet
 │   ├── report.js                   # View builder tổng hợp chỉ số 4 sản phẩm
 │   ├── ai-analyst.js               # Động cơ chẩn đoán & chấm điểm AI
 │   ├── export-csv.js               # Module trích xuất file CSV UTF-8
-│   └── server.js                   # Máy chủ Express nội bộ
+│   └── server.js                   # Máy chủ Express nội bộ (chỉ loopback)
+├── test/report.test.js             # 29 test khoá lại các chỉ số quan trọng
 ├── .env                            # Token & App secret (bảo mật, không commit)
 ├── .env.example                    # File mẫu biến môi trường
+├── .backups/                       # Các bản sao lưu cũ (không commit)
 ├── mcp-launcher.js                 # Khởi chạy Meta Ads MCP Server
 ├── package.json
 ├── HUONG_DAN_LAY_TOKEN_META.md     # Cẩm nang lấy token Meta trong 2 phút
 ├── PROJECT_CONTEXT.md              # Bối cảnh & tài liệu kiến trúc toàn diện
+├── BAO_CAO_RA_SOAT_2026-10-16.md   # Báo cáo rà soát & 31 phát hiện đã sửa
 └── README.md
 ```
 
@@ -97,6 +101,28 @@ Truy cập trình duyệt tại: **`http://localhost:3000`**
 
 ### 3. Đồng bộ dữ liệu & Xuất file
 
-- Bấm nút **Đồng bộ** trên thanh điều khiển web để kéo số liệu mới nhất từ Meta.
+- Bấm nút **Đồng bộ** để kéo số liệu mới nhất từ Meta **và** lead từ Google Sheet (~10 giây).
+- Bấm nút **bảng** cạnh đó để chỉ làm mới lead từ Google Sheet (~0,3 giây, không gọi Meta API).
+- Menu **tải xuống** xuất CSV chiến dịch, CSV theo ngày hoặc JSON dữ liệu đã lọc.
 - Hoặc từ Terminal: chạy `npm run fetch` để tự động kéo dữ liệu và xuất file ra thư mục `data/`.
+
+### 4. Kiểm thử
+
+```bash
+npm test
+```
+29 test khoá lại các chỉ số dễ sai nhất: ghép lead vào chiến dịch, lọc theo kỳ và theo
+tài khoản, bất biến `Σ các dòng + chưa gán = tổng KPI`, và việc không gửi số điện thoại
+thật về browser. **Chạy trước khi commit mọi thay đổi trong `src/report.js`.**
+
+## 🔒 Về bảo mật
+
+Dashboard hiển thị chi tiêu, doanh thu và số điện thoại phụ huynh, nên:
+
+- Server **chỉ nhận kết nối từ chính máy cài đặt**. Máy khác trong mạng LAN nhận 403.
+  Muốn mở ra LAN có chủ ý: đặt `ALLOW_REMOTE=true` trong `.env`.
+- **Không gửi header CORS** — website khác bạn đang mở không đọc được dữ liệu BM.
+- Các thao tác ghi (lưu token, đồng bộ) yêu cầu token phiên nội bộ, chống việc một trang
+  web lạ âm thầm ghi đè Access Token.
+- Payload trả về browser chỉ chứa **số điện thoại đã che** (`0936***613`), không có số gốc.
 - Bấm nút **Xuất dữ liệu** để tải file CSV mở trong Excel hoặc file JSON.

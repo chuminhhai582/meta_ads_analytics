@@ -167,17 +167,35 @@ Local_phantich_ads/
     "summary": {
       "totalSpend", "totalMessages", "avgCpa", "expectedDailyBudget", "todaySpend", "todayMessages", "todayCpa", "pacingPct", "campaignCount", "activeCount"
     },
-    "funnel": { "impressions", "clicks", "messages" },
+    "funnel": { "impressions", "clicks", "messages", "l1", "l2", "l3", "l4" },
     "dailyTrend": [ { "date", "spend", "messages", "cpa", ... } ],
     "placements": [ { "platform", "label", "spend", "percentage" } ],
     "campaigns": [
-      { "id", "name", "accountId", "accountName", "product", "productLabel", "effective_status", "expectedDailyBudget", "spend", "messages", "cpa", "todaySpend", "todayMessages", "ctr", "recommendation" }
-    ]
+      { "id", "name", "accountId", "accountName", "product", "productLabel", "effective_status", "expectedDailyBudget", "spend", "messages", "otherConversions", "cpa", "todaySpend", "todayMessages", "ctr", "recommendation",
+        // Lead đã ĐO ĐƯỢC qua adMap — không bao giờ là số chia theo tỉ lệ
+        "l1Count", "l2Count", "l3Count", "l4Count", "revenue", "cpl", "cpaL3", "cac", "roas" }
+    ],
+
+    // ----- Bổ sung từ đợt rà soát 2026-10-16 (schemaVersion 4) -----
+    "schemaVersion": 4,
+    "syncWindow": "last_30d",          // kỳ snapshot thật sự chứa dữ liệu
+    "dateRange": { "startDate", "endDate" },
+    "tabBadges": {                     // THAY THẾ `productTabs` (trước nặng 436 KB)
+      "ucmas": { "l1Count", "l3Count", "l4Count", "campaignCount", "activeCount" }, ...
+    },
+    "fatigueApplicable": true,         // false khi kỳ đang xem ≠ syncWindow
+    "leadAttribution": { "matched", "unmatched", "adMapSize" },
+    "unassignedLeads": { "totalLeads", "l1Count", "l2Count", "l3Count", "l4Count", "revenue" },
+    "dataNotes": [ { "level": "info|warning", "message" } ],
+    "recentEnrolled": [ { "phoneMasked", "l4Date", "entryDate", "fanpage", "revenue", "product" } ]
+    //        ^ KHÔNG chứa `phone` hay `adId` gốc (B-02)
   },
   "analysis": {
     "healthScore": 66,
     "statusLabel": "Hoạt động trung bình",
     "statusLevel": "warn",
+    "thresholds": { "CPA_GOOD": 65000, ... },   // frontend dùng chung, không hardcode
+    "fatigueApplicable": true,
     "recommendations": [ { "type", "title", "message" } ],
     "topPerformers": [ ... ],
     "moneyWasters": [ ... ],
@@ -186,6 +204,21 @@ Local_phantich_ads/
   }
 }
 ```
+
+### Bất biến BẮT BUỘC giữ (có test tự động khoá lại)
+
+```
+Σ(view.campaigns[].l1Count) + view.unassignedLeads.l1Count === view.summary.l1Count
+```
+Đúng cho cả L2/L3/L4 và `revenue`, với mọi tổ hợp kỳ × sản phẩm × tài khoản.
+Chạy `npm test` trước khi commit bất kỳ thay đổi nào trong `src/report.js`.
+
+### Snapshot `data/latest_insights.json`
+
+| Phiên bản | Khác biệt |
+|---|---|
+| v2 | Không có `adMap`. Vẫn đọc được, nhưng mọi lead vào `unassignedLeads` + hiện cảnh báo cần đồng bộ lại. |
+| **v3** | Có `adMap` (`adId → campaignId`) và `syncWindow`. `dailyRecords` có thêm `reach`, `otherConversions`. |
 
 ---
 
@@ -196,12 +229,63 @@ Local_phantich_ads/
 | CPA tốt / trung bình / cao | ≤ 65.000 ₫ / ≤ 90.000 ₫ / > 90.000 ₫ |
 | Win cần scale | ≥ 10 tin & CPA ≤ 65.000 ₫ (đang chạy) |
 | Cần rà soát (Money Waster) | Chi > 1,2tr & 0 tin, hoặc chi > 2tr & CPA > 130.000 ₫ (đang chạy) |
-| Fatigue | Frequency ≥ 3.0 (đang chạy) |
+| Fatigue | Frequency ≥ 3.0 (đang chạy) — **chỉ áp dụng khi kỳ đang xem = kỳ đồng bộ** |
 | CTR thấp / cao | < 1,2% / ≥ 2,0% |
+
+> Ngưỡng là nguồn duy nhất tại `THRESHOLDS` trong `src/ai-analyst.js`, được gửi kèm
+> payload (`analysis.thresholds`) để frontend dùng chung — không viết lại trong `app.js`.
+
+> **Về Frequency:** Meta chỉ trả `frequency` cho đúng kỳ được truy vấn (reach đã loại
+> trùng nên không suy ra được cho kỳ ngắn hơn). Vì vậy `view.fatigueApplicable` = false
+> khi kỳ đang xem khác kỳ đồng bộ, và quy tắc fatigue bị bỏ qua thay vì dùng số của kỳ khác.
 
 ---
 
 ## 9. Vấn đề đã biết (Known Issues) — cập nhật khi sửa xong
+
+### Đợt rà soát 2026-10-16 — đã sửa toàn bộ 31 phát hiện (đã duyệt)
+
+Báo cáo đầy đủ kèm số đo kiểm chứng: [`BAO_CAO_RA_SOAT_2026-10-16.md`](./BAO_CAO_RA_SOAT_2026-10-16.md)
+
+**Nhóm A — số liệu sai (7/7 ✅)**
+1. ✅ **A-01 Ghép lead đúng qua `adMap`**: sync kéo thêm `act_X/ads?fields=id,campaign_id` dựng bảng tra `adId → campaignId` (schema **v3**). Trước đây so Ad ID với Campaign ID — 2 loại đối tượng khác nhau, 0/1.142 lead khớp.
+2. ✅ **A-02 Bỏ hoàn toàn việc chia lead theo tỉ lệ chi tiêu** (vi phạm §4). Lead không ghép được nằm ở `view.unassignedLeads` + một dòng "Chưa gán được nguồn" có nhãn rõ trong bảng.
+3. ✅ **A-03 Lead/doanh thu lọc theo kỳ**: truyền `startDate`/`endDate` vào mọi phép tổng hợp lead. Kiểm chứng: 30 ngày L1 283 (trước 1.142), ROAS **1,92×** (trước 11,88× — chia doanh thu trọn đời cho chi tiêu 30 ngày).
+4. ✅ **A-04 Lead lọc theo tài khoản** qua `campaign.accountId` của chiến dịch đã ghép.
+5. ✅ **A-05 Một nguồn tính duy nhất**: bất biến `Σ(dòng hiển thị) + unassignedLeads === summary` được test tự động khoá lại cho mọi tổ hợp kỳ × sản phẩm.
+6. ✅ **A-06 Lead không nhận diện được → `'khac'`**, không còn mặc định dồn về UCMAS (trước: 998/1.142 = 87% bị gán UCMAS). Sản phẩm của chiến dịch đã ghép được ưu tiên hơn cột trong sheet.
+7. ✅ **A-07 Tách `messages` và `otherConversions`**: `extractConversions()` không còn trả về đơn hàng dưới dạng "tin nhắn". CPA chỉ tính trên tin nhắn. Fatigue chỉ đánh giá khi `fatigueApplicable`.
+
+**Nhóm B — bảo mật & dữ liệu cá nhân (3/3 ✅)**
+8. ✅ **B-01**: bỏ `cors()` (không còn `Access-Control-Allow-Origin: *`); chặn mọi kết nối không phải loopback (403); route ghi yêu cầu header `X-Internal-Token` lấy từ `GET /api/session` → chặn CSRF ghi đè token. Mở LAN có chủ ý bằng `ALLOW_REMOTE=true`.
+9. ✅ **B-02**: `recentEnrolled` chỉ còn các trường được chọn tường minh — `phone` và `adId` gốc không rời khỏi server nữa.
+10. ✅ **B-03**: `validateConfigInput()` kiểm tra định dạng token/appId/appSecret/sheetUrl; `updateEnvFile()` lọc `\r\n` chống chèn biến vào `.env`.
+
+**Nhóm C — chức năng hỏng (7/7 ✅)**
+11. ✅ **C-01**: thêm thật 3 route `/api/export/campaigns|daily|json` (trước trả về `index.html` 23 KB kèm status 200). Thêm nút "Làm mới Google Sheet" gọi `/api/sync-sheet` (~0,3s).
+12. ✅ **C-02**: `/api/*` không khớp → `404 JSON`, đặt trước SPA fallback.
+13. ✅ **C-03**: guard `rawReport` trong `respondWithView` (409 thay vì TypeError 500); truyền đủ bộ lọc.
+14. ✅ **C-04**: hàm `esc()` bọc mọi giá trị động; toast dùng `textContent`. Kiểm chứng: tên chiến dịch chứa `<img onerror>` và `<script>` hiển thị nguyên văn, không chèn được DOM.
+15. ✅ **C-05**: `AbortController` huỷ request cũ khi đổi bộ lọc liên tiếp.
+16. ✅ **C-06**: sort ép chuỗi trước `localeCompare`; dùng `classList.toggle` thay vì ghi đè `className` (giữ được class căn lề).
+17. ✅ **C-07**: kỳ đồng bộ ghi rõ ở `raw.syncWindow`, UI cảnh báo khi kỳ đang chọn vượt vùng dữ liệu.
+
+**Nhóm D — hiệu năng (5/5 ✅)**
+18. ✅ **D-01**: `productTabs` (436 KB, dùng 4 con số) → `tabBadges`. Payload **883 KB → 428 KB**.
+19. ✅ **D-02**: *bỏ* — D-01 đã giảm một nửa payload, không thêm dependency `compression` để giữ stack gọn.
+20. ✅ **D-03**: `Map` tra chiến dịch theo ID (bỏ `.find()` lồng ≈ 688.000 phép so sánh/request) + gộp 9 lượt quét lead thành 1. **`buildView` 17,4ms → 1,40ms**; request 24ms → ~6ms.
+21. ✅ **D-04**: bỏ lời gọi `insights_today` trùng lặp (today suy ra từ `dailyRecords`); thêm `reach` vào `insights_daily`; thêm lời gọi `ads` cho `adMap`.
+22. ✅ **D-05**: cache `buildView` theo khoá `product|accountId|datePreset|tab`, xoá khi đồng bộ (tối đa 32 bản).
+
+**Nhóm E — chất lượng code (9/9 ✅)**
+23. ✅ E-01 ngưỡng CPA gửi qua payload, frontend không hardcode. 24. ✅ E-02 BM ID / Sheet URL / phiên bản API đọc từ `.env` + `/api/session`. 25. ✅ E-03 `summarizeLeads` có default param. 26. ✅ E-04 xoá import chết, dùng chung `ROOT_DIR`. 27. ✅ E-05 export dùng lại `convertToCsv()` (kèm chống CSV formula injection). 28. ✅ E-06 xoá hàm `selectProduct()` không dùng. 29. ✅ E-07 gộp 3 thư mục backup vào `.backups/`. 30. ✅ E-08 **29 test tự động** (`npm test`) khoá lại toàn bộ nhóm A. 31. ✅ E-09 tài liệu cập nhật bằng số đo thật.
+
+> ⚠️ **Việc cần làm của chủ dự án**: Access Token đã **hết hạn ngày 15/10/2026**
+> (`OAuthException 190: Session has expired`). Cần lấy token mới rồi bấm "Đồng bộ" một lần
+> để sinh snapshot v3 có `adMap` — trước đó các cột lead ở từng chiến dịch sẽ bằng 0 và
+> toàn bộ lead nằm ở dòng "Chưa gán được nguồn" (đúng chủ ý: thà thiếu hơn sai).
+
+### Đợt rà soát 2026-10-15 (lịch sử)
 
 > Đã hoàn tất rà soát & tối ưu ngày 2026-10-15:
 1. ✅ **Phân trang (pagination) Graph API**: Đã thêm `callGraphApiAll()` duyệt toàn bộ `paging.next` cho `campaigns`, `adsets`, `insights`. Số chiến dịch quét tăng từ 479 lên 618 (TK 1: 224 chiến dịch, TK 6: 115 chiến dịch).
@@ -230,6 +314,7 @@ Local_phantich_ads/
 | 2026-10-15 | **Tối ưu toàn diện hệ thống (Đã duyệt)**: Phân trang API (quét đủ 618 CĐ), xoá demo/fake data, thay thế KPI e-commerce bằng tin nhắn/pacing thực tế, đồng nhất UI/UX Dark Glassmorphism, chuẩn hoá schema v2. |
 | 2026-10-15 | **Nâng cấp Local Data Lake (Offline-First - Đã duyệt)**: Tách triệt để lớp lưu trữ hạt lựu (`dailyRecords`, `placementRecords`) và lớp biểu diễn (`buildView`). Chuyển toàn bộ lọc tài khoản / ngày / sản phẩm sang xử lý local tức thì (< 2ms), chống Rate Limit Meta, trải nghiệm mượt mà tuyệt đối. |
 | 2026-10-15 | **Tích hợp Google Sheet & 5 Tab Chuyên Sâu (Đã duyệt)**: Xây dựng module `src/google-sheet.js`, đo lường phễu tuyển sinh 6 tầng L1-L4, ghi nhận doanh thu học phí & CAC thực tế, chia 5 tab chuyên sâu cho từng sản phẩm. |
+| 2026-10-16 | **Rà soát toàn hệ thống & sửa 31 phát hiện (Đã duyệt)**: ghép lead đúng qua `adMap` (schema v3), bỏ chia lead theo tỉ lệ chi tiêu, lọc lead theo kỳ & tài khoản, khoá bất biến Σdòng = tổng KPI bằng 29 test; chặn CORS `*` + chỉ cho loopback + token CSRF; ngừng gửi SĐT thật về client; sửa 3 link export hỏng; payload 883→428 KB, `buildView` 17,4→1,40 ms. |
 | 2026-10-15 | **Bổ sung cột SĐT (L1), L3, L4, Doanh thu và Chi tiêu nền tảng vào danh sách chiến dịch**: Tích hợp dữ liệu phễu tuyển sinh và phân rã chi tiêu Facebook, Instagram, Messenger, Audience Network chi tiết cho từng hàng chiến dịch kèm chức năng sắp xếp linh hoạt. |
 
 
