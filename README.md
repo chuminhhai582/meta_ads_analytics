@@ -29,7 +29,7 @@ Hệ thống quản lý, trích xuất dữ liệu và phân tích quảng cáo 
    - Điểm sức khỏe tài khoản (0 - 100).
    - Tự động phát hiện chiến dịch hiệu quả cao cần scale ngân sách an toàn.
    - Cảnh báo chiến dịch chi tiêu cao nhưng không ra tin nhắn hoặc CPA quá đắt.
-   - Cảnh báo bão hòa Creative khi tần suất hiển thị (Frequency) ≥ 3.0.
+   - Cảnh báo bão hòa Creative khi tần suất hiển thị (Frequency) ≥ 3.0 — chỉ khi kỳ đang xem trùng kỳ đồng bộ.
 
 5. **Trực Quan Hóa Biểu Đồ & Xuất Báo Cáo**:
    - Biểu đồ xu hướng hàng ngày kết hợp Chi tiêu và Số tin nhắn (di chuột xem CPA).
@@ -50,9 +50,9 @@ Local_phantich_ads/
 │       ├── plugin.json
 │       ├── mcp_config.json
 │       └── skills/meta-ads/SKILL.md
-├── backup_2026-10-15/              # Bản sao lưu an toàn
 ├── data/                           # Dữ liệu xuất ra (JSON & CSV)
-│   ├── latest_insights.json        # Snapshot raw report v2
+│   ├── latest_insights.json        # Snapshot raw report v3 (có adMap)
+│   ├── leads_cache.json            # Cache lead CRM từ Google Sheet
 │   ├── campaigns.csv               # Báo cáo chiến dịch (Excel UTF-8 BOM)
 │   └── daily_performance.csv       # Báo cáo theo ngày
 ├── public/                         # Giao diện Web Dashboard
@@ -67,7 +67,13 @@ Local_phantich_ads/
 │   ├── ai-analyst.js               # Động cơ chẩn đoán & chấm điểm AI
 │   ├── export-csv.js               # Module trích xuất file CSV UTF-8
 │   └── server.js                   # Máy chủ Express nội bộ (chỉ loopback)
-├── test/report.test.js             # 29 test khoá lại các chỉ số quan trọng
+├── launch.js                       # Khởi động server + mở trình duyệt (shortcut gọi file này)
+├── Mo-Dashboard.cmd                # Đích của shortcut ngoài Desktop
+├── assets/dashboard.ico            # Icon cho shortcut (sinh bởi tools/make-icon.js)
+├── tools/
+│   ├── make-icon.js                # Sinh file .ico, không cần thư viện ngoài
+│   └── make-shortcut.ps1           # Tạo lại shortcut ngoài Desktop
+├── test/report.test.js             # 32 test khoá lại các chỉ số quan trọng
 ├── .env                            # Token & App secret (bảo mật, không commit)
 ├── .env.example                    # File mẫu biến môi trường
 ├── .backups/                       # Các bản sao lưu cũ (không commit)
@@ -85,11 +91,24 @@ Local_phantich_ads/
 
 ### 1. Khởi động Web Dashboard
 
-Mở terminal tại thư mục này và chạy:
+**Cách thường dùng — double-click shortcut `Ucmas Ads Analytics` ngoài Desktop.**
+Nó tự khởi động server, chờ sẵn sàng rồi mở trình duyệt. Bấm lần nữa khi dashboard
+đang chạy thì chỉ mở lại tab, không khởi động trùng. **Đóng cửa sổ console đen là tắt
+dashboard.**
+
+Chưa có shortcut (máy mới, hoặc vừa di chuyển thư mục dự án):
 ```bash
-npm start
+npm run shortcut
+```
+
+Hoặc chạy bằng terminal:
+```bash
+npm run launch
 ```
 Truy cập trình duyệt tại: **`http://localhost:3000`**
+
+> `npm start` cũng chạy được, nhưng chỉ bật server — không tự mở trình duyệt và
+> không kiểm tra cổng có đang bị chiếm hay không.
 
 ### 2. Cấu hình Access Token
 
@@ -111,7 +130,7 @@ Truy cập trình duyệt tại: **`http://localhost:3000`**
 ```bash
 npm test
 ```
-29 test khoá lại các chỉ số dễ sai nhất: ghép lead vào chiến dịch, lọc theo kỳ và theo
+32 test khoá lại các chỉ số dễ sai nhất: ghép lead vào chiến dịch, lọc theo kỳ và theo
 tài khoản, bất biến `Σ các dòng + chưa gán = tổng KPI`, và việc không gửi số điện thoại
 thật về browser. **Chạy trước khi commit mọi thay đổi trong `src/report.js`.**
 
@@ -124,5 +143,5 @@ Dashboard hiển thị chi tiêu, doanh thu và số điện thoại phụ huynh
 - **Không gửi header CORS** — website khác bạn đang mở không đọc được dữ liệu BM.
 - Các thao tác ghi (lưu token, đồng bộ) yêu cầu token phiên nội bộ, chống việc một trang
   web lạ âm thầm ghi đè Access Token.
-- Payload trả về browser chỉ chứa **số điện thoại đã che** (`0936***613`), không có số gốc.
+- Payload trả về browser chỉ chứa **số điện thoại đã che** (ví dụ `0912***345`), không có số gốc.
 - Bấm nút **Xuất dữ liệu** để tải file CSV mở trong Excel hoặc file JSON.

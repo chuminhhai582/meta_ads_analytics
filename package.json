@@ -7,8 +7,11 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "launch": "node launch.js",
     "fetch": "node src/meta-api.js",
     "test": "node --test \"test/**/*.test.js\"",
+    "icon": "node tools/make-icon.js",
+    "shortcut": "powershell -ExecutionPolicy Bypass -File tools/make-shortcut.ps1",
     "mcp": "node mcp-launcher.js"
   },
   "keywords": [
