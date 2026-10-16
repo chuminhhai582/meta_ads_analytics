@@ -150,20 +150,44 @@ async function main() {
   console.log(`  Tai khoan quang cao token nay nhin thay:`);
 
   let visible = [];
+
+  // Buoc 1: hoi thang BM. Chi thanh cong khi token thuoc mot System User la ADMIN cua BM.
   try {
     const res = await call(`${config.businessId}/owned_ad_accounts`, {
       fields: 'id,name,account_id', limit: 100
     });
     visible = res.data || [];
-    console.log(`  Trong BM ${config.businessId}: ${visible.length} tai khoan`);
+    if (visible.length) console.log(`  Trong BM ${config.businessId}: ${visible.length} tai khoan`);
   } catch (err) {
-    console.log(`  Khong doc duoc BM ${config.businessId} (${err.code}: ${err.message.slice(0, 60)})`);
+    console.log(`  Khong hoi duoc BM truc tiep (${err.code}: ${err.message.slice(0, 50)})`);
+  }
+
+  // Buoc 2: fallback. BAT BUOC chay ca khi buoc 1 tra ve RONG chu khong chi khi loi —
+  // mot System User duoc gan QUYEN TUNG TAI KHOAN (khong phai admin BM) se khien
+  // /owned_ad_accounts tra ve 0 ma khong bao loi, du token doc duoc cac tai khoan do.
+  // Day dung la cach src/meta-api.js getUserAdAccounts() hoat dong.
+  if (visible.length === 0) {
+    console.log(`  BM tra ve 0 tai khoan -> doi sang /me/adaccounts (giong dashboard)`);
     try {
-      const res = await call('me/adaccounts', { fields: 'id,name,account_id', limit: 100 });
-      visible = res.data || [];
-      console.log(`  Qua /me/adaccounts: ${visible.length} tai khoan (co the thuoc nhieu BM)`);
-    } catch {
-      console.log('  Khong liet ke duoc tai khoan nao.');
+      const res = await call('me/adaccounts', {
+        fields: 'id,name,account_id,business{id,name}', limit: 100
+      });
+      const all = res.data || [];
+      visible = all.filter(a => a.business?.id === config.businessId);
+      console.log(`  Token nhin thay tong cong ${all.length} tai khoan, trong do ${visible.length} thuoc BM ${config.businessId}`);
+
+      const others = all.filter(a => a.business?.id !== config.businessId);
+      if (others.length) {
+        const byBiz = {};
+        for (const a of others) {
+          const k = a.business ? `${a.business.name || a.business.id}` : '(khong thuoc business nao)';
+          byBiz[k] = (byBiz[k] || 0) + 1;
+        }
+        console.log('  Ngoai BM nay (dashboard se bo qua):');
+        for (const [k, v] of Object.entries(byBiz)) console.log(`    ${v} tai khoan - ${k}`);
+      }
+    } catch (err) {
+      console.log(`  Khong liet ke duoc tai khoan nao (${err.code}: ${err.message.slice(0, 50)})`);
     }
   }
 
