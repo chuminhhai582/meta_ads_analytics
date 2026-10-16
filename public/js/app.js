@@ -831,10 +831,23 @@ function renderDailyChart() {
   Chart.defaults.color = '#94a3b8';
   Chart.defaults.font.family = "'Inter', sans-serif";
 
+  // Nhãn trục X đổi theo độ mịn: ngày "16/10", tuần "T.16/10", tháng "10/2026".
+  const unit = appState.view?.trendGranularity?.unit || 'day';
   const labels = daily.map(d => {
     const parts = d.date.split('-');
-    return parts.length >= 3 ? `${parts[2]}/${parts[1]}` : d.date;
+    if (unit === 'month') return parts.length >= 2 ? `${parts[1]}/${parts[0]}` : d.date;
+    if (parts.length < 3) return d.date;
+    return unit === 'week' ? `T.${parts[2]}/${parts[1]}` : `${parts[2]}/${parts[1]}`;
   });
+
+  // Nói rõ biểu đồ đang gộp theo gì, để không ai đọc nhầm cột tháng thành cột ngày.
+  const trendHint = document.getElementById('dailyChartHint');
+  if (trendHint) {
+    const g = appState.view?.trendGranularity;
+    trendHint.textContent = g && g.unit !== 'day'
+      ? `Cột: chi tiêu • Đường: số tin nhắn — đang gộp ${g.label} (khoảng thời gian dài)`
+      : 'Cột: chi tiêu • Đường: số tin nhắn (di chuột để xem giá/tin)';
+  }
 
   dailyChart = new Chart(ctx, {
     type: 'bar',

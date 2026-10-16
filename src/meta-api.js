@@ -300,7 +300,7 @@ async function fetchAccountData(acc, { since, until, onProgress }) {
   for (const c of chunks) {
     const rows = await safe(`insights_daily ${c.since.slice(0, 7)}`, callGraphApiAll(`${ep}/insights`, {
       level: 'campaign', time_range: { since: c.since, until: c.until }, time_increment: 1,
-      fields: 'campaign_id,date_start,spend,impressions,reach,clicks,actions', limit: 500
+      fields: 'campaign_id,date_start,spend,impressions,clicks,actions', limit: 500
     }));
     daily.push(...rows);
     if (onProgress) onProgress(acc, c, rows.length);
@@ -344,7 +344,6 @@ function normalizeAccount({ acc, campaigns, adsets, ads, recent, daily, placemen
       expectedDailyBudget,
       // Chi tiêu / tin nhắn / hiển thị / click đều do report.js tính lại từ dailyRecords
       // theo đúng khoảng thời gian đang xem, nên không lưu bản tổng ở đây nữa.
-      reach30d: parseInt(r.reach || 0, 10),
       // Tần suất của 30 NGÀY GẦN NHẤT, không phải của phạm vi kho dữ liệu.
       // Đây là cửa sổ duy nhất mà chỉ số này có ý nghĩa để phát hiện bão hoà creative.
       frequency: parseFloat(r.frequency || 0)
@@ -367,7 +366,6 @@ function normalizeAccount({ acc, campaigns, adsets, ads, recent, daily, placemen
       date: d.date_start,
       spend: parseFloat(d.spend || 0),
       impressions: parseInt(d.impressions || 0, 10),
-      reach: parseInt(d.reach || 0, 10),
       clicks: parseInt(d.clicks || 0, 10),
       messages,
       otherConversions
@@ -386,30 +384,6 @@ function normalizeAccount({ acc, campaigns, adsets, ads, recent, daily, placemen
   }));
 
   return { campaigns: result, dailyRows, placementRows, adMap };
-}
-
-/** Aggregate rows into { productKey: [...] } maps. */
-function groupDaily(rows) {
-  const out = {};
-  for (const r of rows) {
-    const bucket = (out[r.product] ||= new Map());
-    const item = bucket.get(r.date) || { date: r.date, spend: 0, impressions: 0, clicks: 0, messages: 0 };
-    item.spend += r.spend; item.impressions += r.impressions; item.clicks += r.clicks; item.messages += r.messages;
-    bucket.set(r.date, item);
-  }
-  return Object.fromEntries(Object.entries(out).map(([k, m]) =>
-    [k, [...m.values()].sort((a, b) => a.date.localeCompare(b.date))]));
-}
-
-function groupPlacements(rows) {
-  const out = {};
-  for (const r of rows) {
-    const bucket = (out[r.product] ||= {});
-    const item = bucket[r.platform] || { platform: r.platform, spend: 0, impressions: 0 };
-    item.spend += r.spend; item.impressions += r.impressions;
-    bucket[r.platform] = item;
-  }
-  return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, Object.values(v)]));
 }
 
 /**
@@ -502,8 +476,6 @@ export async function fetchRawReport(accountId = 'ALL', options = {}) {
     adMap,
     dailyRecords: dailyRows,
     placementRecords: placementRows,
-    dailyByProduct: groupDaily(dailyRows),
-    placementsByProduct: groupPlacements(placementRows),
     warnings
   };
 }

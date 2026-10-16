@@ -117,6 +117,48 @@ export const DATE_PRESETS = [
 /** 'YYYY-MM-DD' → 'YYYY-MM' */
 export const monthOf = (dateStr) => String(dateStr || '').slice(0, 7);
 
+/**
+ * Chọn độ mịn cho biểu đồ xu hướng theo độ dài khoảng thời gian.
+ *
+ * Vẽ 289 điểm ngày cho chế độ "Cả năm" cho ra các cột rộng dưới 1 pixel — đo thực tế
+ * 0,88px/cột. Gộp lại để biểu đồ còn đọc được, và nói rõ đang gộp theo gì.
+ */
+export function pickTrendGranularity(startDate, endDate) {
+  const days = Math.round(
+    (Date.UTC(...endDate.split('-').map((v, i) => (i === 1 ? +v - 1 : +v))) -
+     Date.UTC(...startDate.split('-').map((v, i) => (i === 1 ? +v - 1 : +v)))) / 86400000
+  ) + 1;
+  if (days <= 45) return { unit: 'day', label: 'theo ngày' };
+  if (days <= 180) return { unit: 'week', label: 'theo tuần' };
+  return { unit: 'month', label: 'theo tháng' };
+}
+
+/** Thứ Hai của tuần chứa `dateStr`, dạng YYYY-MM-DD. */
+function weekStartOf(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const dow = (dt.getUTCDay() + 6) % 7; // 0 = thứ Hai
+  return new Date(dt.getTime() - dow * 86400000).toISOString().split('T')[0];
+}
+
+/** Gộp các điểm theo ngày thành tuần hoặc tháng. */
+export function rollUpTrend(dailyPoints, unit) {
+  if (unit === 'day') return dailyPoints;
+
+  const buckets = new Map();
+  for (const p of dailyPoints) {
+    const key = unit === 'week' ? weekStartOf(p.date) : monthOf(p.date);
+    const b = buckets.get(key) ||
+      { date: key, spend: 0, impressions: 0, clicks: 0, messages: 0, days: 0 };
+    b.spend += p.spend; b.impressions += p.impressions;
+    b.clicks += p.clicks; b.messages += p.messages; b.days += 1;
+    buckets.set(key, b);
+  }
+  return [...buckets.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(b => ({ ...b, cpa: b.messages > 0 ? round(b.spend / b.messages) : 0 }));
+}
+
 /** Sum metrics of a campaign list into one stats object. */
 function aggregate(campaigns) {
   const s = campaigns.reduce((acc, c) => {
@@ -274,7 +316,6 @@ export function buildView(raw, options = {}) {
   const placementRecords = raw.placementRecords || [];
   const rawLeads = raw.leadsRecords || [];
   const rawCampaignsList = raw.campaigns || [];
-  const hasDaily = dailyRecords.length > 0;
 
   // Campaign lookup by id — replaces the O(leads × campaigns) .find() this used to do.
   const campaignById = new Map(rawCampaignsList.map(c => [c.id, c]));
@@ -463,9 +504,11 @@ export function buildView(raw, options = {}) {
   const activeConvMsgToL1 = s.messages > 0 ? ratio(activeLeadSummary.l1Count, s.messages) : 0;
 
   // 5. Daily trend list sorted chronologically
-  const dailyTrend = [...dailyDateMap.values()]
+  const dailyPoints = [...dailyDateMap.values()]
     .sort((a, b) => a.date.localeCompare(b.date))
     .map(d => ({ ...d, cpa: d.messages > 0 ? round(d.spend / d.messages) : 0 }));
+  const trendGranularity = pickTrendGranularity(startDate, endDate);
+  const dailyTrend = rollUpTrend(dailyPoints, trendGranularity.unit);
 
   // 6. Placements breakdown
   const placementMap = new Map();
@@ -617,6 +660,8 @@ export function buildView(raw, options = {}) {
       l4: activeLeadSummary.l4Count
     },
     dailyTrend,
+    /** Biểu đồ xu hướng đang gộp theo gì: day | week | month. */
+    trendGranularity,
     placements,
     campaigns: viewCampaigns,
     recentEnrolled: leadAttr.enrolled.slice(0, 10).map(publicEnrolled),

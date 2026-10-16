@@ -9,7 +9,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { buildView, getDateRange, getVietnamDateString, maskPhone } from '../src/report.js';
+import {
+  buildView, getDateRange, getVietnamDateString, maskPhone,
+  pickTrendGranularity, rollUpTrend
+} from '../src/report.js';
 import {
   detectProduct, extractConversions, TARGET_KEYS,
   monthChunks, planSync, mergeByDate, addDaysTo
@@ -339,6 +342,52 @@ test('Cảnh báo khi xem ra ngoài phạm vi kho dữ liệu', () => {
     v.dataNotes.some(n => n.level === 'warning' && /Kho dữ liệu chỉ có từ/.test(n.message)),
     'Phải cảnh báo khi khoảng chọn bắt đầu trước coverage.since'
   );
+});
+
+test('Biểu đồ xu hướng tự gộp khi khoảng thời gian dài', () => {
+  // 289 điểm ngày trên canvas 253px = 0,88px mỗi cột — không đọc được.
+  assert.equal(pickTrendGranularity('2026-10-01', '2026-10-16').unit, 'day');
+  assert.equal(pickTrendGranularity('2026-09-01', '2026-10-15').unit, 'day', '45 ngày vẫn để theo ngày');
+  assert.equal(pickTrendGranularity('2026-07-19', '2026-10-16').unit, 'week', '90 ngày → theo tuần');
+  assert.equal(pickTrendGranularity('2026-01-01', '2026-10-16').unit, 'month', 'Cả năm → theo tháng');
+});
+
+test('rollUpTrend cộng đúng và không làm mất số liệu', () => {
+  const days = [
+    { date: '2026-01-05', spend: 10, impressions: 100, clicks: 5, messages: 2, cpa: 5 },
+    { date: '2026-01-06', spend: 20, impressions: 200, clicks: 5, messages: 3, cpa: 7 },
+    { date: '2026-02-10', spend: 30, impressions: 300, clicks: 10, messages: 0, cpa: 0 }
+  ];
+  const total = (rows, f) => rows.reduce((s, r) => s + r[f], 0);
+
+  const byMonth = rollUpTrend(days, 'month');
+  assert.equal(byMonth.length, 2);
+  assert.deepEqual(byMonth.map(b => b.date), ['2026-01', '2026-02']);
+  assert.equal(byMonth[0].spend, 30, 'Tháng 1 = 10 + 20');
+  assert.equal(byMonth[0].messages, 5);
+  assert.equal(byMonth[0].cpa, 6, 'CPA tính lại trên tổng, không phải trung bình cộng các CPA ngày');
+  assert.equal(byMonth[1].cpa, 0, '0 tin nhắn thì CPA = 0, không chia cho 0');
+  assert.equal(total(byMonth, 'spend'), total(days, 'spend'), 'Gộp không được làm mất chi tiêu');
+
+  // Tuần bắt đầu từ thứ Hai: 05/01/2026 là thứ Hai nên 05 và 06 cùng tuần
+  const byWeek = rollUpTrend(days, 'week');
+  assert.equal(byWeek[0].date, '2026-01-05');
+  assert.equal(byWeek[0].spend, 30);
+  assert.equal(total(byWeek, 'spend'), total(days, 'spend'));
+
+  // unit 'day' phải trả về nguyên bản
+  assert.equal(rollUpTrend(days, 'day'), days);
+});
+
+test('buildView gắn trendGranularity và gộp đúng số điểm', () => {
+  const snap = makeSnapshot();
+  snap.coverage = { since: '2026-01-01', until: TODAY };
+  const v = buildView(snap, { datePreset: 'this_year' });
+  assert.equal(v.trendGranularity.unit, 'month');
+  assert.ok(v.dailyTrend.length <= 12, 'Cả năm tối đa 12 cột, không phải ~289');
+
+  const short = buildView(snap, { datePreset: 'last_7d' });
+  assert.equal(short.trendGranularity.unit, 'day');
 });
 
 test('Phân bổ nền tảng lọc theo tháng', () => {
