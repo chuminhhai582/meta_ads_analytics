@@ -80,6 +80,7 @@ Local_phantich_ads/
 ├── mcp-launcher.js                 # Khởi chạy Meta Ads MCP Server
 ├── package.json
 ├── HUONG_DAN_LAY_TOKEN_META.md     # Cẩm nang lấy token Meta trong 2 phút
+├── HUONG_DAN_LAY_TOKEN_TU_N8N.md   # Lấy lại token Meta có sẵn trong n8n (cPanel)
 ├── PROJECT_CONTEXT.md              # Bối cảnh & tài liệu kiến trúc toàn diện
 ├── BAO_CAO_RA_SOAT_2026-10-16.md   # Báo cáo rà soát & 31 phát hiện đã sửa
 └── README.md
