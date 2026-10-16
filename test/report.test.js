@@ -7,6 +7,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { buildView, getDateRange, getVietnamDateString, maskPhone } from '../src/report.js';
 import { detectProduct, extractConversions, TARGET_KEYS } from '../src/meta-api.js';
@@ -367,6 +368,43 @@ test('convertToCsv escape dấu nháy kép trong tên chiến dịch', () => {
 
 test('buildView báo lỗi rõ ràng khi chưa có snapshot', () => {
   assert.throws(() => buildView(null), /chưa có dữ liệu snapshot/i);
+});
+
+// ---------------------------------------------------------------------------
+// B-01 — the CORS hole must stay closed.
+// `cors` lives on in node_modules as a transitive dep of the MCP SDK, so npm's flat
+// tree would still resolve `import cors from 'cors'`. These two checks are what
+// actually prevent the hole from being reopened by accident.
+// ---------------------------------------------------------------------------
+test('B-01: cors không còn là dependency trực tiếp', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
+  assert.equal(pkg.dependencies.cors, undefined, 'cors phải được xoá khỏi dependencies');
+});
+
+test('B-01: server.js không dùng cors và không phát header CORS', () => {
+  const src = readFileSync(new URL('../src/server.js', import.meta.url), 'utf-8');
+  // Strip comments first — the file explains WHY cors is absent, and that must not
+  // make this test fail.
+  const code = src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map(line => line.replace(/\/\/.*$/, ''))
+    .join('\n');
+
+  assert.ok(!/from\s+['"]cors['"]/.test(code), 'Không được import cors');
+  assert.ok(!/require\(\s*['"]cors['"]\s*\)/.test(code), 'Không được require cors');
+  assert.ok(!/\bcors\s*\(/.test(code), 'Không được gọi cors()');
+  assert.ok(
+    !/Access-Control-Allow-Origin/i.test(code),
+    'Không được tự set header Access-Control-Allow-Origin'
+  );
+});
+
+test('B-01: server chỉ cho phép loopback trừ khi ALLOW_REMOTE=true', () => {
+  const src = readFileSync(new URL('../src/server.js', import.meta.url), 'utf-8');
+  assert.ok(/config\.allowRemote/.test(src), 'Phải kiểm tra cờ allowRemote');
+  assert.ok(/isLoopback\(req\.socket\.remoteAddress\)/.test(src), 'Phải chặn theo IP của socket');
+  assert.ok(/requireSessionToken/.test(src), 'Route ghi phải yêu cầu token phiên');
 });
 
 test('ngân sách dự kiến chỉ tính chiến dịch đang chạy', () => {
