@@ -50,8 +50,8 @@ let syncInFlight = null;
 /** product|accountId|datePreset → { view, analysis }. Cleared whenever rawReport changes. */
 const viewCache = new Map();
 
-function cacheKey({ product, accountId, datePreset, activeTab }) {
-  return [product, accountId, datePreset, activeTab].join('|');
+function cacheKey({ product, accountId, datePreset, activeTab, startDate, endDate }) {
+  return [product, accountId, datePreset, activeTab, startDate || '', endDate || ''].join('|');
 }
 
 function invalidateViewCache() {
@@ -120,13 +120,18 @@ loadSnapshot();
 /** Normalize the filter params any endpoint may receive. */
 function readOptions(source) {
   const activeTab = source.tab || source.activeTab || 'all';
+  // 'custom' không nằm trong DATE_PRESETS vì nó cần kèm startDate/endDate;
+  // buildView tự quay về last_30d nếu hai ngày đó không dùng được.
+  const wantsCustom = source.datePreset === 'custom';
   return {
     activeTab,
     product: source.product || source.productFilter || (activeTab !== 'all' ? activeTab : 'ALL'),
     accountId: source.accountId || 'ALL',
-    datePreset: DATE_PRESETS.includes(source.datePreset)
+    datePreset: wantsCustom || DATE_PRESETS.includes(source.datePreset)
       ? source.datePreset
-      : (rawReport?.datePreset || 'last_30d')
+      : 'last_30d',
+    startDate: wantsCustom ? String(source.startDate || '').slice(0, 10) : undefined,
+    endDate: wantsCustom ? String(source.endDate || '').slice(0, 10) : undefined
   };
 }
 

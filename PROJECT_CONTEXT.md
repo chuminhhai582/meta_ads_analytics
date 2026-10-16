@@ -168,6 +168,10 @@ mọi route **ghi** đòi header `X-Internal-Token` lấy từ `GET /api/session
 `today`, `yesterday`, `last_7d`, `last_14d`, `last_30d`, `last_90d`,
 `this_month`, `last_month`, `this_quarter`, `this_year`.
 
+Ngoài ra `datePreset=custom` kèm `startDate` + `endDate` (YYYY-MM-DD) cho khoảng ngày
+tự chọn. Ngày không hợp lệ / thiếu → tự quay về `last_30d`; chọn ngược → tự đảo;
+vượt quá hôm nay → cắt về hôm nay. Xem `normalizeCustomRange()`.
+
 ---
 
 ## 7. Cấu trúc view báo cáo trả về cho Client

@@ -36,13 +36,10 @@
               <path d="M18 2C9.163 2 2 9.163 2 18c0 7.98 5.86 14.588 13.5 15.77V22.625h-4.063V18H15.5v-3.52c0-4.01 2.387-6.225 6.043-6.225 1.751 0 3.582.313 3.582.313v3.938h-2.018c-1.988 0-2.607 1.233-2.607 2.5V18h4.437l-.71 4.625h-3.727v11.145C28.14 32.588 34 25.98 34 18c0-8.837-7.163-16-16-16z"/>
             </svg>
           </div>
-          <div>
-            <h1 class="brand-title">Ucmas Ads Analytics</h1>
-            <p class="brand-subtitle">BM Ucmas Việt Nam • Meta Marketing API</p>
-          </div>
+          <h1 class="brand-title">Ucmas Ads Analytics</h1>
         </div>
 
-        <div id="liveBadge" class="account-badge badge-idle">
+        <div id="liveBadge" class="account-badge badge-idle" title="Thời điểm dữ liệu được đồng bộ gần nhất">
           <span class="badge-dot"></span>
           <span id="liveBadgeText">Đang tải...</span>
         </div>
@@ -52,15 +49,6 @@
         <label for="accountSelect" class="visually-hidden">Chọn tài khoản</label>
         <select id="accountSelect" class="custom-select account-select" title="Chọn tài khoản quảng cáo">
           <option value="ALL">🏢 Toàn BM Ucmas Việt Nam</option>
-        </select>
-
-        <label for="productSelect" class="visually-hidden">Chọn sản phẩm</label>
-        <select id="productSelect" class="custom-select" title="Lọc theo sản phẩm">
-          <option value="ALL">📦 Tất cả 4 sản phẩm</option>
-          <option value="ucmas">UCMAS</option>
-          <option value="uckid">UCKID</option>
-          <option value="mathca">MATHCA</option>
-          <option value="traihe">TRẠI HÈ</option>
         </select>
 
         <label for="datePresetSelect" class="visually-hidden">Khoảng thời gian</label>
@@ -79,7 +67,20 @@
             <option value="this_quarter">Quý này</option>
             <option value="this_year">Cả năm nay</option>
           </optgroup>
+          <optgroup label="Tự chọn">
+            <option value="custom">Chọn khoảng ngày…</option>
+          </optgroup>
         </select>
+
+        <!-- Chỉ hiện khi chọn "Chọn khoảng ngày…" để không chiếm chỗ lúc không dùng -->
+        <div id="customRangeBox" class="custom-range d-none">
+          <label for="customStartDate" class="visually-hidden">Từ ngày</label>
+          <input type="date" id="customStartDate" class="date-input" title="Từ ngày">
+          <span class="range-sep" aria-hidden="true">→</span>
+          <label for="customEndDate" class="visually-hidden">Đến ngày</label>
+          <input type="date" id="customEndDate" class="date-input" title="Đến ngày">
+          <button id="applyRangeBtn" class="btn btn-sm btn-primary" type="button">Áp dụng</button>
+        </div>
 
         <button id="syncBtn" class="btn btn-primary" title="Đồng bộ dữ liệu mới nhất từ Meta Ads + Google Sheet (~10 giây)">
           <i data-lucide="refresh-cw" id="syncIcon"></i>
@@ -111,6 +112,32 @@
           </div>
         </div>
       </div>
+      <nav class="product-tabs-bar" id="productTabsBar" aria-label="Chọn tab phân tích sản phẩm">
+        <button class="tab-btn active" data-tab="all" id="tabBtnAll">
+          <i data-lucide="layout-grid"></i>
+          <span>Tổng quan (Toàn BM)</span>
+        </button>
+        <button class="tab-btn" data-tab="ucmas" id="tabBtnUcmas">
+          <i data-lucide="book-open"></i>
+          <span>UCMAS</span>
+          <span class="tab-badge" id="tabBadgeUcmas">--</span>
+        </button>
+        <button class="tab-btn" data-tab="uckid" id="tabBtnUckid">
+          <i data-lucide="sparkles"></i>
+          <span>UCKID</span>
+          <span class="tab-badge" id="tabBadgeUckid">--</span>
+        </button>
+        <button class="tab-btn" data-tab="mathca" id="tabBtnMathca">
+          <i data-lucide="calculator"></i>
+          <span>MATHCA</span>
+          <span class="tab-badge" id="tabBadgeMathca">--</span>
+        </button>
+        <button class="tab-btn" data-tab="traihe" id="tabBtnTraihe">
+          <i data-lucide="sun"></i>
+          <span>TRẠI HÈ</span>
+          <span class="tab-badge" id="tabBadgeTraihe">--</span>
+        </button>
+      </nav>
     </header>
 
     <main class="dashboard-body" id="dashboardBody">
@@ -127,32 +154,6 @@
       </section>
 
         <!-- ============ 5 TABS NAVIGATION ============ -->
-        <nav class="product-tabs-bar" id="productTabsBar" aria-label="Chọn tab phân tích sản phẩm">
-          <button class="tab-btn active" data-tab="all" id="tabBtnAll">
-            <i data-lucide="layout-grid"></i>
-            <span>Tổng quan (Toàn BM)</span>
-          </button>
-          <button class="tab-btn" data-tab="ucmas" id="tabBtnUcmas">
-            <i data-lucide="book-open"></i>
-            <span>UCMAS</span>
-            <span class="tab-badge" id="tabBadgeUcmas">--</span>
-          </button>
-          <button class="tab-btn" data-tab="uckid" id="tabBtnUckid">
-            <i data-lucide="sparkles"></i>
-            <span>UCKID</span>
-            <span class="tab-badge" id="tabBadgeUckid">--</span>
-          </button>
-          <button class="tab-btn" data-tab="mathca" id="tabBtnMathca">
-            <i data-lucide="calculator"></i>
-            <span>MATHCA</span>
-            <span class="tab-badge" id="tabBadgeMathca">--</span>
-          </button>
-          <button class="tab-btn" data-tab="traihe" id="tabBtnTraihe">
-            <i data-lucide="sun"></i>
-            <span>TRẠI HÈ</span>
-            <span class="tab-badge" id="tabBadgeTraihe">--</span>
-          </button>
-        </nav>
 
         <!-- ============ AI HERO ============ -->
         <section class="ai-hero-card" id="aiHeroSection">

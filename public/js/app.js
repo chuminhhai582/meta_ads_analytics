@@ -51,7 +51,8 @@ const PRESET_LABELS = {
   this_month: '(Tháng này)',
   last_month: '(Tháng trước)',
   this_quarter: '(Quý này)',
-  this_year: '(Cả năm nay)'
+  this_year: '(Cả năm nay)',
+  custom: '(Khoảng tự chọn)'
 };
 
 const STATUS_TEXT = {
@@ -197,24 +198,61 @@ function initEventListeners() {
 
   // Date preset select (100% Local slicing)
   const datePresetSelect = document.getElementById('datePresetSelect');
+  const customRangeBox = document.getElementById('customRangeBox');
+  const startInput = document.getElementById('customStartDate');
+  const endInput = document.getElementById('customEndDate');
+  const applyRangeBtn = document.getElementById('applyRangeBtn');
+
   if (datePresetSelect) {
     datePresetSelect.addEventListener('change', () => {
-      appState.selectedDatePreset = datePresetSelect.value;
+      const v = datePresetSelect.value;
+      if (v === 'custom') {
+        // Hiện 2 ô ngày, điền sẵn khoảng đang xem để người dùng chỉnh từ đó.
+        customRangeBox?.classList.remove('d-none');
+        const r = appState.view?.dateRange;
+        if (startInput && !startInput.value) startInput.value = r?.startDate || '';
+        if (endInput && !endInput.value) endInput.value = r?.endDate || '';
+        clampDateInputs();
+        // Chưa gọi API — đợi bấm "Áp dụng" để không tải 2 lần khi đang chọn dở.
+        return;
+      }
+      customRangeBox?.classList.add('d-none');
+      appState.selectedDatePreset = v;
+      appState.customStart = null;
+      appState.customEnd = null;
       loadData();
     });
   }
 
-  // Product select dropdown
-  const productSelect = document.getElementById('productSelect');
-  if (productSelect) {
-    productSelect.addEventListener('change', () => {
-      const p = productSelect.value;
-      appState.activeTab = p === 'ALL' ? 'all' : p;
-      appState.selectedProduct = p;
-      updateActiveTabUI();
-      loadData();
+  /** Không cho chọn ngày tương lai, và giới hạn theo vùng dữ liệu đã tải. */
+  function clampDateInputs() {
+    const cov = appState.view?.coverage;
+    const today = new Date().toISOString().slice(0, 10);
+    [startInput, endInput].forEach(el => {
+      if (!el) return;
+      el.max = today;
+      if (cov?.since) el.min = cov.since;
     });
   }
+
+  function applyCustomRange() {
+    const s = startInput?.value;
+    const e = endInput?.value;
+    if (!s || !e) {
+      showToast('Chọn đủ cả ngày bắt đầu và ngày kết thúc.', 'warning');
+      return;
+    }
+    // Người dùng chọn ngược thì tự đảo thay vì báo lỗi.
+    appState.customStart = s <= e ? s : e;
+    appState.customEnd = s <= e ? e : s;
+    appState.selectedDatePreset = 'custom';
+    loadData();
+  }
+
+  if (applyRangeBtn) applyRangeBtn.addEventListener('click', applyCustomRange);
+  [startInput, endInput].forEach(el => {
+    el?.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') applyCustomRange(); });
+  });
 
   // Table search & status filter
   const tableSearchInput = document.getElementById('tableSearchInput');
@@ -346,10 +384,6 @@ function updateActiveTabUI() {
     }
   });
 
-  const productSelect = document.getElementById('productSelect');
-  if (productSelect) {
-    productSelect.value = appState.selectedProduct;
-  }
 }
 
 /**
@@ -362,6 +396,10 @@ async function loadData() {
     datePreset: appState.selectedDatePreset || 'last_30d',
     tab: appState.activeTab || 'all'
   });
+  if (appState.selectedDatePreset === 'custom' && appState.customStart && appState.customEnd) {
+    params.set('startDate', appState.customStart);
+    params.set('endDate', appState.customEnd);
+  }
 
   // Cancel any request still in flight: changing account → date → product in quick
   // succession used to render whichever response happened to land last.
@@ -401,6 +439,22 @@ function applyPayload(json) {
   appState.selectedAccount = json.view.accountId || 'ALL';
   appState.selectedDatePreset = json.view.datePreset || 'last_30d';
   if (json.analysis?.thresholds) thresholds = json.analysis.thresholds;
+
+  // Giữ ô chọn kỳ và 2 ô ngày khớp với những gì server thực sự áp dụng —
+  // server có thể quay về last_30d nếu khoảng tự chọn không dùng được.
+  const presetSel = document.getElementById('datePresetSelect');
+  if (presetSel) presetSel.value = json.view.datePreset || 'last_30d';
+  const box = document.getElementById('customRangeBox');
+  if (box) box.classList.toggle('d-none', !json.view.isCustomRange);
+  if (json.view.isCustomRange && json.view.dateRange) {
+    const s = document.getElementById('customStartDate');
+    const e = document.getElementById('customEndDate');
+    if (s) s.value = json.view.dateRange.startDate;
+    if (e) e.value = json.view.dateRange.endDate;
+    appState.customStart = json.view.dateRange.startDate;
+    appState.customEnd = json.view.dateRange.endDate;
+  }
+
   renderAll();
 }
 

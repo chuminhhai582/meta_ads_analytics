@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 
 import {
   buildView, getDateRange, getVietnamDateString, maskPhone,
-  pickTrendGranularity, rollUpTrend
+  pickTrendGranularity, rollUpTrend, isValidDateStr, normalizeCustomRange
 } from '../src/report.js';
 import {
   detectProduct, extractConversions, TARGET_KEYS,
@@ -342,6 +342,73 @@ test('Cảnh báo khi xem ra ngoài phạm vi kho dữ liệu', () => {
     v.dataNotes.some(n => n.level === 'warning' && /Kho dữ liệu chỉ có từ/.test(n.message)),
     'Phải cảnh báo khi khoảng chọn bắt đầu trước coverage.since'
   );
+});
+
+// ---------------------------------------------------------------------------
+// Khoảng ngày tự chọn
+// ---------------------------------------------------------------------------
+test('isValidDateStr chỉ nhận ngày có thật', () => {
+  assert.equal(isValidDateStr('2026-02-28'), true);
+  assert.equal(isValidDateStr('2026-02-30'), false, '30/02 không tồn tại');
+  assert.equal(isValidDateStr('2024-02-29'), true, '2024 là năm nhuận');
+  assert.equal(isValidDateStr('2026-02-29'), false, '2026 không nhuận');
+  assert.equal(isValidDateStr('2026-13-01'), false);
+  assert.equal(isValidDateStr('2026-00-10'), false);
+  assert.equal(isValidDateStr('16/10/2026'), false, 'Sai định dạng');
+  assert.equal(isValidDateStr(''), false);
+  assert.equal(isValidDateStr(null), false);
+});
+
+test('normalizeCustomRange tự đảo ngày và chặn ngày tương lai', () => {
+  const ref = new Date('2026-10-16T10:00:00Z');
+  assert.deepEqual(
+    normalizeCustomRange('2026-03-01', '2026-03-31', ref),
+    { startDate: '2026-03-01', endDate: '2026-03-31' }
+  );
+  assert.deepEqual(
+    normalizeCustomRange('2026-03-31', '2026-03-01', ref),
+    { startDate: '2026-03-01', endDate: '2026-03-31' },
+    'Chọn ngược phải tự đảo, không báo lỗi'
+  );
+  assert.deepEqual(
+    normalizeCustomRange('2026-10-01', '2099-01-01', ref),
+    { startDate: '2026-10-01', endDate: '2026-10-16' },
+    'Ngày tương lai bị cắt về hôm nay'
+  );
+  assert.equal(normalizeCustomRange('bad', '2026-03-01', ref), null);
+  assert.equal(normalizeCustomRange(undefined, undefined, ref), null);
+});
+
+test('buildView áp dụng khoảng ngày tự chọn', () => {
+  const snap = makeSnapshot();
+  const v = buildView(snap, { datePreset: 'custom', startDate: YESTERDAY, endDate: YESTERDAY });
+  assert.equal(v.isCustomRange, true);
+  assert.equal(v.datePreset, 'custom');
+  assert.deepEqual(v.dateRange, { startDate: YESTERDAY, endDate: YESTERDAY });
+  // Fixture có 3 chiến dịch chạy hôm qua
+  assert.ok(v.summary.totalSpend > 0, 'Phải có chi tiêu của ngày hôm qua');
+});
+
+test('buildView quay về last_30d khi khoảng tự chọn không dùng được', () => {
+  const snap = makeSnapshot();
+  for (const bad of [
+    { datePreset: 'custom' },
+    { datePreset: 'custom', startDate: '2026-02-30', endDate: '2026-03-01' },
+    { datePreset: 'custom', startDate: 'hôm qua', endDate: 'hôm nay' }
+  ]) {
+    const v = buildView(snap, bad);
+    assert.equal(v.isCustomRange, false, JSON.stringify(bad));
+    assert.equal(v.datePreset, 'last_30d', JSON.stringify(bad));
+  }
+});
+
+test('Bất biến vẫn đúng với khoảng ngày tự chọn', () => {
+  const snap = makeSnapshot();
+  const v = buildView(snap, { datePreset: 'custom', startDate: YESTERDAY, endDate: TODAY });
+  const u = v.unassignedLeads;
+  const sum = f => v.campaigns.reduce((a, c) => a + (c[f] || 0), 0);
+  assert.equal(sum('l1Count') + u.l1Count, v.summary.l1Count);
+  assert.equal(sum('revenue') + u.revenue, v.summary.totalRevenue);
 });
 
 test('Biểu đồ xu hướng tự gộp khi khoảng thời gian dài', () => {

@@ -35,6 +35,29 @@ export const PLATFORM_LABELS = {
 const round = (n) => Math.round(n || 0);
 const ratio = (a, b, digits = 2) => (b > 0 ? parseFloat(((a / b) * 100).toFixed(digits)) : 0);
 
+/** Đúng định dạng YYYY-MM-DD và là ngày có thật. */
+export function isValidDateStr(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y, m, d] = s.split('-').map(Number);
+  if (m < 1 || m > 12 || d < 1) return false;
+  return d <= new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+/**
+ * Chuẩn hoá khoảng ngày do người dùng tự chọn.
+ * Trả về null nếu không dùng được, để bên gọi quay về preset.
+ */
+export function normalizeCustomRange(startDate, endDate, refDate = new Date()) {
+  if (!isValidDateStr(startDate) || !isValidDateStr(endDate)) return null;
+  // Tự đảo nếu người dùng chọn ngược
+  let [since, until] = startDate <= endDate ? [startDate, endDate] : [endDate, startDate];
+  // Không cho vượt quá hôm nay — Meta không có dữ liệu tương lai
+  const todayStr = getVietnamDateString(refDate);
+  if (until > todayStr) until = todayStr;
+  if (since > todayStr) since = todayStr;
+  return { startDate: since, endDate: until };
+}
+
 /**
  * Compute { startDate, endDate, todayStr, yesterdayStr } for a preset in Vietnam time.
  */
@@ -310,7 +333,14 @@ export function buildView(raw, options = {}) {
   const selectedProduct = TARGET_KEYS.includes(product) ? product : 'ALL';
   const selectedAccount = (accountId && accountId !== 'ALL') ? String(accountId).replace(/^act_/, '') : 'ALL';
 
-  const { startDate, endDate, todayStr } = getDateRange(datePreset);
+  // Khoảng ngày tự chọn được ưu tiên; không hợp lệ thì quay về preset.
+  const custom = datePreset === 'custom'
+    ? normalizeCustomRange(opts.startDate, opts.endDate)
+    : null;
+  const effectivePreset = custom ? 'custom' : (datePreset === 'custom' ? 'last_30d' : datePreset);
+  const range = custom || getDateRange(effectivePreset);
+  const { startDate, endDate } = range;
+  const { todayStr } = getDateRange('today');
 
   const dailyRecords = raw.dailyRecords || [];
   const placementRecords = raw.placementRecords || [];
@@ -593,7 +623,10 @@ export function buildView(raw, options = {}) {
   return {
     schemaVersion: 5,
     fetchedAt: raw.fetchedAt,
-    datePreset,
+    /** Preset thực sự đang dùng — 'custom' khi người dùng tự chọn khoảng ngày. */
+    datePreset: effectivePreset,
+    /** true khi khoảng ngày do người dùng tự nhập (không phải preset dựng sẵn). */
+    isCustomRange: Boolean(custom),
     coverage,
     lastSync: raw.lastSync || null,
     /** Tần suất luôn đo trên 30 ngày gần nhất, không phụ thuộc khoảng đang xem. */
