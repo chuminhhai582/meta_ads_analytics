@@ -161,10 +161,53 @@ body.is-syncing .report-content { opacity: 0.55; pointer-events: none; transitio
   border-radius: var(--radius-lg);
   position: sticky; top: 12px; z-index: 50;
 }
-.header-left  { grid-area: brand; }
-.header-right { grid-area: controls; justify-content: flex-end; }
-.header-left, .header-right { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.header-left { gap: var(--space-3); }
+.header-left  { grid-area: brand; display: flex; align-items: center; gap: var(--space-3); }
+.header-right {
+  grid-area: controls;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+/* Tool group thu gọn cho các nút tiện ích */
+.header-tool-group {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 3px;
+  gap: 2px;
+}
+.btn-tool-item {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+}
+.btn-tool-item:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+}
+.btn-tool-item svg { width: 16px; height: 16px; }
+
+.account-select {
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.date-select {
+  max-width: 150px;
+}
 
 .brand-logo { display: flex; align-items: center; gap: 10px; }
 .logo-icon {
@@ -429,6 +472,14 @@ body.is-syncing .report-content { opacity: 0.55; pointer-events: none; transitio
 
 /* ---------- Recommendations ---------- */
 .recommendations-section { display: flex; flex-direction: column; gap: var(--space-4); }
+.recommendations-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.recommendations-body.collapsed { display: none; }
+
 .insight-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--space-3); }
 .insight-item { padding: 14px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); border-left: 3px solid currentColor; background: rgba(255, 255, 255, 0.03); }
 .insight-item strong { display: block; font-size: 0.88rem; margin-bottom: 2px; }
@@ -456,8 +507,21 @@ body.is-syncing .report-content { opacity: 0.55; pointer-events: none; transitio
 .search-icon { position: absolute; left: 12px; width: 16px; height: 16px; color: var(--text-muted); }
 .search-input-wrap input { padding: 8px 14px 8px 36px; font-size: 0.84rem; width: 260px; }
 
-.table-responsive { overflow-x: auto; overflow-y: auto; max-height: 720px; border-radius: var(--radius-md); -webkit-overflow-scrolling: touch; }
-.data-table { width: 100%; min-width: 1580px; border-collapse: collapse; font-size: 0.83rem; text-align: left; }
+.table-responsive {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 720px;
+  border-radius: var(--radius-md);
+  -webkit-overflow-scrolling: touch;
+}
+.data-table {
+  width: 100%;
+  min-width: 1680px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.83rem;
+  text-align: left;
+}
 .data-table th {
   position: sticky; top: 0; z-index: 1;
   background: var(--bg-card-solid);
@@ -469,6 +533,42 @@ body.is-syncing .report-content { opacity: 0.55; pointer-events: none; transitio
 .data-table th.sorted { color: var(--primary-text); }
 .data-table th.sorted::after { content: ' ↓'; }
 .data-table th.sorted.asc::after { content: ' ↑'; }
+
+/* Sticky Columns for Table: Checkbox (col 1) + Name (col 2) */
+.data-table th.th-checkbox,
+.data-table td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--bg-card-solid);
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  text-align: center;
+}
+
+.data-table th#thName,
+.data-table td:nth-child(2) {
+  position: sticky;
+  left: 44px;
+  z-index: 2;
+  background: var(--bg-card-solid);
+  min-width: 250px;
+  max-width: 320px;
+  box-shadow: 4px 0 10px -2px rgba(0, 0, 0, 0.6);
+}
+
+.data-table thead th.th-checkbox,
+.data-table thead th#thName {
+  z-index: 4;
+  background: #111827;
+}
+
+.data-table tbody tr:hover td:first-child,
+.data-table tbody tr:hover td:nth-child(2) {
+  background: #141c2e;
+}
+
 .data-table td { padding: 12px 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.04); vertical-align: middle; }
 .data-table td.num { text-align: right; white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; }
 .data-table tbody tr:hover td { background: rgba(255, 255, 255, 0.025); }
@@ -809,5 +909,30 @@ body.is-syncing .report-content { opacity: 0.55; pointer-events: none; transitio
 }
 @media (max-width: 480px) {
   .kpi-grid { grid-template-columns: 1fr; }
+}
+
+/* ---------- Custom Dark Scrollbar ---------- */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(56, 189, 248, 0.4);
+}
+
+/* ---------- Floating Toolbar Glassmorphism ---------- */
+.replicate-toolbar {
+  box-shadow: 0 20px 40px -6px rgba(0, 0, 0, 0.8), 0 0 24px rgba(0, 128, 251, 0.25) !important;
+  border: 1px solid rgba(0, 128, 251, 0.4) !important;
+  backdrop-filter: blur(18px) !important;
+  -webkit-backdrop-filter: blur(18px) !important;
 }
 

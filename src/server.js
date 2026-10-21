@@ -9,6 +9,7 @@ import {
   saveReportFiles, convertToCsv, campaignFields, dailyFields, CSV_BOM
 } from './export-csv.js';
 import { fetchGoogleSheetLeads } from './google-sheet.js';
+import { crossPostRouter } from './cross-post.js';
 
 const dataDir = path.resolve(ROOT_DIR, 'data');
 const publicDir = path.resolve(ROOT_DIR, 'public');
@@ -366,6 +367,18 @@ app.get('/docs/huong-dan-token', (req, res) => {
   } else {
     res.status(404).send('Không tìm thấy tài liệu hướng dẫn.');
   }
+});
+
+// Cross-Post & Creative Replication
+app.use('/api/cp/publish', requireSessionToken);
+app.use('/api/cp/replicate-ad', requireSessionToken);
+app.use('/api/cp/analyze-campaigns', requireSessionToken);
+app.use('/api/cp/bulk-replicate', requireSessionToken);
+app.use('/api/cp/refresh-cache', requireSessionToken);
+app.use('/api/cp', crossPostRouter);
+
+app.get('/cross-post', (req, res) => {
+  res.sendFile(path.join(publicDir, 'cross-post.html'));
 });
 
 // Unknown API route → real 404 JSON. Without this the SPA fallback below answered every

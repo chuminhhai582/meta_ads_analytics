@@ -24,7 +24,9 @@ const appState = {
   /** CSRF token from GET /api/session, echoed on every mutating request. */
   sessionToken: null,
   /** Aborts the previous /api/data request so a slow one can't overwrite a newer one. */
-  pendingLoad: null
+  pendingLoad: null,
+  /** Campaign IDs selected for replication (Set<string>) */
+  selectedCampaignIds: new Set()
 };
 
 /**
@@ -1322,7 +1324,8 @@ function renderTable() {
   if (countBadge) countBadge.textContent = `${filtered.length} chiến dịch`;
 
   if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="16" class="table-empty">Không tìm thấy chiến dịch nào phù hợp với bộ lọc hiện tại</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="17" class="table-empty">Không tìm thấy chiến dịch nào phù hợp với bộ lọc hiện tại</td></tr>`;
+    updateSelectionToolbar();
     return;
   }
 
@@ -1361,8 +1364,11 @@ function renderTable() {
 
     const platformHtml = renderPlatformTags(c);
 
+    const isSelected = appState.selectedCampaignIds.has(c.id);
+
     html += `
-      <tr>
+      <tr class="${isSelected ? 'row-selected' : ''}" data-campaign-id="${esc(c.id)}">
+        <td class="td-checkbox"><input type="checkbox" class="campaign-row-chk" data-cid="${esc(c.id)}" ${isSelected ? 'checked' : ''}></td>
         <td>
           <div class="camp-name">${esc(c.name)}</div>
           <div class="camp-id">ID: ${esc(c.id)}</div>
@@ -1418,6 +1424,7 @@ function renderTable() {
 
   html += renderUnassignedRow();
   tbody.innerHTML = html;
+  updateSelectionToolbar();
 }
 
 /**
@@ -1431,6 +1438,7 @@ function renderUnassignedRow() {
 
   return `
     <tr class="row-unassigned">
+      <td class="td-checkbox"></td>
       <td>
         <div class="camp-name text-muted">Chưa gán được nguồn</div>
         <div class="camp-id">${formatNumber(u.totalLeads)} lead có Ad ID trống hoặc không thuộc BM</div>
@@ -1453,3 +1461,104 @@ function renderUnassignedRow() {
     </tr>
   `;
 }
+
+// =====================================================================
+// Campaign Selection & Replication Toolbar
+// =====================================================================
+
+/**
+ * Update floating toolbar visibility and count based on selectedCampaignIds.
+ * Also syncs the "select all" checkbox state.
+ */
+function updateSelectionToolbar() {
+  const toolbar = document.getElementById('replicateToolbar');
+  const countEl = document.getElementById('selectedCampaignCount');
+  const selectAllChk = document.getElementById('selectAllCampaignsChk');
+  const n = appState.selectedCampaignIds.size;
+
+  if (toolbar) toolbar.style.display = n > 0 ? 'block' : 'none';
+  if (countEl) countEl.innerHTML = `Đã chọn: <strong>${n}</strong> chiến dịch`;
+
+  // Sync select-all checkbox
+  if (selectAllChk) {
+    const allCampaigns = appState.view?.campaigns || [];
+    selectAllChk.checked = allCampaigns.length > 0 && n >= allCampaigns.length;
+    selectAllChk.indeterminate = n > 0 && n < allCampaigns.length;
+  }
+
+  // Refresh lucide icons in toolbar
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+/** Get campaign objects for selected IDs */
+function getSelectedCampaigns() {
+  const all = appState.view?.campaigns || [];
+  return all.filter(c => appState.selectedCampaignIds.has(c.id));
+}
+
+// --- Event delegation on campaign table for checkboxes ---
+document.addEventListener('click', (e) => {
+  // Individual row checkbox
+  const chk = e.target.closest('.campaign-row-chk');
+  if (chk) {
+    const cid = chk.dataset.cid;
+    if (chk.checked) {
+      if (appState.selectedCampaignIds.size >= 20) {
+        chk.checked = false;
+        alert('Tối đa 20 chiến dịch mỗi lần nhân bản.');
+        return;
+      }
+      appState.selectedCampaignIds.add(cid);
+    } else {
+      appState.selectedCampaignIds.delete(cid);
+    }
+    // Highlight row
+    const row = chk.closest('tr');
+    if (row) row.classList.toggle('row-selected', chk.checked);
+    updateSelectionToolbar();
+    return;
+  }
+});
+
+// Select All checkbox
+document.getElementById('selectAllCampaignsChk')?.addEventListener('change', (e) => {
+  const all = appState.view?.campaigns || [];
+  if (e.target.checked) {
+    const limited = all.slice(0, 20);
+    limited.forEach(c => appState.selectedCampaignIds.add(c.id));
+  } else {
+    appState.selectedCampaignIds.clear();
+  }
+  renderTable();
+});
+
+// Deselect All button
+document.getElementById('deselectAllCampaignsBtn')?.addEventListener('click', () => {
+  appState.selectedCampaignIds.clear();
+  renderTable();
+});
+
+// Open Replicate Modal button
+document.getElementById('openReplicateModalBtn')?.addEventListener('click', () => {
+  if (appState.selectedCampaignIds.size === 0) return;
+  // Trigger the modal from replicate-modal.js
+  if (typeof window.openReplicateModal === 'function') {
+    window.openReplicateModal(getSelectedCampaigns(), appState.sessionToken);
+  }
+});
+
+// Toggle Recommendations Section (Collapse / Expand)
+document.getElementById('toggleRecsBtn')?.addEventListener('click', () => {
+  const body = document.getElementById('recommendationsBody');
+  const icon = document.getElementById('toggleRecsIcon');
+  const text = document.getElementById('toggleRecsText');
+  if (!body) return;
+
+  const isCollapsed = body.classList.toggle('collapsed');
+  if (text) text.textContent = isCollapsed ? 'Mở rộng' : 'Thu gọn';
+  if (icon) {
+    icon.setAttribute('data-lucide', isCollapsed ? 'chevron-down' : 'chevron-up');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+});
+

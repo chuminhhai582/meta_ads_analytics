@@ -15,7 +15,8 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js" defer></script>
   <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js" defer></script>
 
-  <link rel="stylesheet" href="css/style.css?v=20261016">
+  <link rel="stylesheet" href="css/style.css?v=20261020">
+  <link rel="stylesheet" href="css/replicate.css?v=20261020">
 </head>
 <body>
   <!-- Top loading bar (shown while syncing) -->
@@ -52,7 +53,7 @@
         </select>
 
         <label for="datePresetSelect" class="visually-hidden">Khoảng thời gian</label>
-        <select id="datePresetSelect" class="custom-select" title="Khoảng thời gian">
+        <select id="datePresetSelect" class="custom-select date-select" title="Khoảng thời gian">
           <optgroup label="Gần đây">
             <option value="today">Hôm nay</option>
             <option value="yesterday">Hôm qua</option>
@@ -87,28 +88,36 @@
           <span>Đồng bộ</span>
         </button>
 
-        <button id="syncSheetBtn" class="btn btn-icon" title="Chỉ làm mới lead từ Google Sheet (~0,3 giây, không gọi Meta API)" aria-label="Làm mới Google Sheet">
-          <i data-lucide="table-2" id="syncSheetIcon"></i>
-        </button>
+        <a id="navCrossPostBtn" href="/cross-post" class="btn btn-secondary" title="Sao chép bài đăng & quảng cáo sang nhiều Fanpage">
+          <i data-lucide="share-2"></i>
+          <span>Đăng bài chéo</span>
+        </a>
 
-        <button id="openConfigBtn" class="btn btn-icon" title="Cài đặt Token" aria-label="Cài đặt Token">
-          <i data-lucide="key-round"></i>
-        </button>
-
-        <div class="dropdown" id="exportDropdown">
-          <button id="exportDropdownBtn" class="btn btn-icon" title="Xuất dữ liệu" aria-label="Xuất dữ liệu">
-            <i data-lucide="download"></i>
+        <!-- Toolbar tiện ích thu gọn: Sheet CRM, Cài đặt Token, Xuất File -->
+        <div class="header-tool-group">
+          <button id="syncSheetBtn" class="btn-tool-item" title="Chỉ làm mới lead từ Google Sheet (~0,3 giây, không gọi Meta API)" aria-label="Làm mới Google Sheet">
+            <i data-lucide="table-2" id="syncSheetIcon"></i>
           </button>
-          <div id="exportMenu" class="dropdown-menu">
-            <a id="exportCampaignsLink" href="/api/export/campaigns" class="dropdown-item" download>
-              <i data-lucide="file-spreadsheet"></i> CSV Chiến dịch (Excel)
-            </a>
-            <a id="exportDailyLink" href="/api/export/daily" class="dropdown-item" download>
-              <i data-lucide="calendar"></i> CSV Theo ngày (Excel)
-            </a>
-            <a id="exportJsonLink" href="/api/export/json" class="dropdown-item" download>
-              <i data-lucide="file-code"></i> JSON dữ liệu gốc
-            </a>
+
+          <button id="openConfigBtn" class="btn-tool-item" title="Cài đặt Token & Hệ thống" aria-label="Cài đặt Token">
+            <i data-lucide="key-round"></i>
+          </button>
+
+          <div class="dropdown" id="exportDropdown">
+            <button id="exportDropdownBtn" class="btn-tool-item" title="Xuất dữ liệu Excel / CSV / JSON" aria-label="Xuất dữ liệu">
+              <i data-lucide="download"></i>
+            </button>
+            <div id="exportMenu" class="dropdown-menu">
+              <a id="exportCampaignsLink" href="/api/export/campaigns" class="dropdown-item" download>
+                <i data-lucide="file-spreadsheet"></i> CSV Chiến dịch (Excel)
+              </a>
+              <a id="exportDailyLink" href="/api/export/daily" class="dropdown-item" download>
+                <i data-lucide="calendar"></i> CSV Theo ngày (Excel)
+              </a>
+              <a id="exportJsonLink" href="/api/export/json" class="dropdown-item" download>
+                <i data-lucide="file-code"></i> JSON dữ liệu gốc
+              </a>
+            </div>
           </div>
         </div>
       </div>
@@ -357,16 +366,24 @@
         </section>
 
         <!-- ============ RECOMMENDATIONS ============ -->
-        <section class="recommendations-section">
-          <div class="section-header">
-            <div class="section-title-wrap">
-              <i data-lucide="bot" class="section-title-icon"></i>
-              <h3 class="section-title">Khuyến nghị hành động</h3>
+        <section class="recommendations-section" id="recommendationsSection">
+          <div class="section-header" style="flex-direction:row; justify-content:space-between; align-items:center;">
+            <div>
+              <div class="section-title-wrap">
+                <i data-lucide="bot" class="section-title-icon"></i>
+                <h3 class="section-title">Khuyến nghị hành động</h3>
+              </div>
+              <p class="section-desc">Tổng hợp tự động theo ngưỡng CPA / tần suất (chỉ chiến dịch đang chạy)</p>
             </div>
-            <p class="section-desc">Tổng hợp tự động theo ngưỡng CPA / tần suất (chỉ chiến dịch đang chạy)</p>
+            <button id="toggleRecsBtn" class="btn btn-secondary btn-sm" type="button" style="display:inline-flex;align-items:center;gap:6px;" title="Thu gọn / Mở rộng danh sách khuyến nghị">
+              <i data-lucide="chevron-up" id="toggleRecsIcon"></i>
+              <span id="toggleRecsText">Thu gọn</span>
+            </button>
           </div>
-          <div class="insight-list" id="insightList"></div>
-          <div class="recommendations-grid" id="recommendationsGrid"></div>
+          <div id="recommendationsBody" class="recommendations-body">
+            <div class="insight-list" id="insightList"></div>
+            <div class="recommendations-grid" id="recommendationsGrid"></div>
+          </div>
         </section>
 
         <!-- ============ CAMPAIGN TABLE ============ -->
@@ -396,6 +413,7 @@
             <table class="data-table" id="campaignsDataTable">
               <thead>
                 <tr>
+                  <th class="th-checkbox" id="thSelectAll"><input type="checkbox" id="selectAllCampaignsChk" title="Chọn / bỏ chọn tất cả"></th>
                   <th data-sort="name" id="thName">Chiến dịch</th>
                   <th data-sort="productLabel" id="thProduct">Sản phẩm</th>
                   <th data-sort="accountName" id="thAccount">Tài khoản</th>
@@ -417,6 +435,26 @@
               <tbody id="campaignsTableBody"></tbody>
             </table>
           </div>
+
+          <!-- Floating Selection Toolbar -->
+          <div id="replicateToolbar" class="replicate-toolbar" style="display:none;">
+            <div class="replicate-toolbar-inner">
+              <div class="toolbar-info">
+                <i data-lucide="check-square" style="width:18px;height:18px;"></i>
+                <span id="selectedCampaignCount">Đã chọn: <strong>0</strong> chiến dịch</span>
+              </div>
+              <div class="toolbar-actions">
+                <button id="deselectAllCampaignsBtn" class="btn btn-secondary btn-sm" type="button">
+                  <i data-lucide="x"></i> Bỏ chọn
+                </button>
+                <button id="openReplicateModalBtn" class="btn btn-primary" type="button">
+                  <i data-lucide="copy-plus"></i>
+                  <span>Phân tích & Nhân bản</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
         </section>
       </div>
     </main>
@@ -483,9 +521,45 @@
   </div>
 
 
+  <!-- ============ REPLICATION MODAL ============ -->
+  <div id="replicateModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="replicateModalTitle" style="display:none;">
+    <div class="modal-box modal-box-lg">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-icon" style="background:var(--primary-glow);"><i data-lucide="copy-plus"></i></div>
+          <h3 class="modal-title" id="replicateModalTitle">Nhân bản chiến dịch hiệu quả</h3>
+        </div>
+        <button id="closeReplicateModalBtn" class="btn-close" aria-label="Đóng">&times;</button>
+      </div>
+
+      <!-- Step Indicator -->
+      <div class="wizard-steps" id="wizardSteps">
+        <div class="wizard-step active" data-step="1"><span class="step-num">1</span><span>Phân tích Ads</span></div>
+        <div class="wizard-step" data-step="2"><span class="step-num">2</span><span>Chọn đích</span></div>
+        <div class="wizard-step" data-step="3"><span class="step-num">3</span><span>Ngân sách</span></div>
+        <div class="wizard-step" data-step="4"><span class="step-num">4</span><span>Thực thi</span></div>
+      </div>
+
+      <div class="modal-body" id="replicateModalBody" style="min-height:320px;max-height:60vh;overflow-y:auto;">
+        <!-- Dynamic content rendered by replicate-modal.js -->
+        <div id="replicateStepContent"></div>
+      </div>
+
+      <div class="modal-footer" id="replicateModalFooter">
+        <div class="replicate-safety-notice" style="flex:1;display:flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--text-muted);">
+          <i data-lucide="shield-check" style="width:14px;height:14px;color:var(--success);"></i>
+          <span>Delay 2.5s/thao tác • Quảng cáo chép = PAUSED • Tối đa 10 mục/lần</span>
+        </div>
+        <button type="button" id="replicatePrevBtn" class="btn btn-secondary" style="display:none;">← Quay lại</button>
+        <button type="button" id="replicateNextBtn" class="btn btn-primary">Tiếp theo →</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast notifications -->
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
-  <script src="js/app.js?v=20261016" defer></script>
+  <script src="js/app.js?v=20261020" defer></script>
+  <script src="js/replicate-modal.js?v=20261020" defer></script>
 </body>
 </html>

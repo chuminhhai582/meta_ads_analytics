@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cross-Post Manager — Sao chép & Đăng bài Fanpage / Ads</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- Base Theme + Cross-post Styles -->
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/cross-post.css">
+</head>
+<body>
+  <div class="cp-container">
+    
+    <!-- Top Header -->
+    <header class="cp-header">
+      <div class="cp-header-title">
+        <a href="/" class="btn btn-secondary btn-sm" id="backToDashboardBtn" title="Quay lại Dashboard Phân tích Ads">
+          <i data-lucide="arrow-left"></i>
+          <span>Về Dashboard</span>
+        </a>
+        <h1 id="cpPageHeading">Cross-Post Manager</h1>
+        <span class="badge" id="bmBadge">BM Ucmas Việt Nam</span>
+      </div>
+      <div class="cp-header-actions" style="display:flex;align-items:center;gap:10px;">
+        <span id="cpCacheStatusText" style="font-size:0.8rem;color:var(--text-muted);"></span>
+        <button id="cpGlobalRefreshBtn" class="btn btn-secondary btn-sm" type="button" title="Lấy lại danh sách Fanpage và Tài khoản mới nhất từ Meta API khi vừa phân quyền thêm">
+          <i data-lucide="refresh-cw"></i>
+          <span>🔄 Làm mới Fanpage & TK</span>
+        </button>
+        <div class="alert-info-pill" id="safetyNotice" style="display:flex;align-items:center;gap:6px;font-size:0.8rem;color:var(--text-secondary);background:var(--bg-card);padding:6px 12px;border-radius:var(--radius-full);border:1px solid var(--border-subtle);white-space:nowrap;">
+          <i data-lucide="shield-check" style="color:var(--success);width:16px;height:16px;"></i>
+          <span>An toàn: Giãn cách 1.5s • Mặc định PAUSED</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Tabs Switcher -->
+    <nav class="cp-tabs" aria-label="Tabs quản lý">
+      <button id="tabFanpageBtn" class="cp-tab-btn active" type="button">
+        <i data-lucide="share-2"></i>
+        <span>Đăng bài chéo Fanpage</span>
+      </button>
+      <button id="tabAdsBtn" class="cp-tab-btn" type="button">
+        <i data-lucide="copy"></i>
+        <span>Nhân bản Quảng cáo (Ads)</span>
+      </button>
+    </nav>
+
+    <!-- ========================================================= -->
+    <!-- SECTION 1: FANPAGE POSTS & CROSS-POSTING                  -->
+    <!-- ========================================================= -->
+    <section id="fanpageSection">
+      <div class="cp-workflow-grid">
+        
+        <!-- Cột trái: Chọn nguồn & Bài đăng -->
+        <div class="cp-col-left">
+          
+          <!-- Card: Chọn Fanpage Nguồn -->
+          <div class="cp-card">
+            <div class="cp-card-header">
+              <h2 class="cp-card-title">
+                <span class="step-num">1</span>
+                <span>Chọn Fanpage nguồn</span>
+              </h2>
+              <button id="refreshPagesBtn" class="btn btn-icon btn-sm" title="Tải lại danh sách Fanpage" type="button">
+                <i data-lucide="refresh-cw" id="refreshPagesIcon"></i>
+              </button>
+            </div>
+            
+            <div class="cp-form-group">
+              <label for="sourcePageSelect" class="cp-form-label">Fanpage lấy bài viết mẫu</label>
+              <select id="sourcePageSelect" class="select-filter" style="width:100%;">
+                <option value="">-- Đang tải danh sách Fanpage... --</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Card: Danh sách bài đăng gần đây -->
+          <div class="cp-card">
+            <div class="cp-card-header">
+              <h2 class="cp-card-title">
+                <span class="step-num">2</span>
+                <span>Chọn bài viết cần sao chép</span>
+              </h2>
+              <span id="postCountBadge" class="badge" style="display:none;">0 bài</span>
+            </div>
+
+            <div id="postsLoadingState" class="cp-empty-state" style="display:none;">
+              <span class="cp-spinner"></span>
+              <p style="margin-top:8px;">Đang tải bài viết từ Fanpage...</p>
+            </div>
+
+            <div id="postsEmptyState" class="cp-empty-state">
+              <i data-lucide="file-text" style="width:36px;height:36px;opacity:0.4;"></i>
+              <p>Vui lòng chọn một Fanpage nguồn ở Bước 1 để hiển thị danh sách bài đăng.</p>
+            </div>
+
+            <div id="pagePostsList" class="cp-post-list" style="display:none;">
+              <!-- Dynamic post items rendered via JS -->
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Cột phải: Xem trước, Chỉnh sửa & Chọn đích đăng -->
+        <div class="cp-col-right">
+
+          <!-- Card: Chỉnh sửa & Xem trước -->
+          <div class="cp-card">
+            <div class="cp-card-header">
+              <h2 class="cp-card-title">
+                <span class="step-num">3</span>
+                <span>Tuỳ chỉnh nội dung bài đăng</span>
+              </h2>
+              <button id="resetEditorBtn" class="btn btn-secondary btn-sm" type="button">
+                <i data-lucide="rotate-ccw"></i>
+                <span>Đặt lại</span>
+              </button>
+            </div>
+
+            <div class="cp-editor-box">
+              <div class="cp-form-group">
+                <label for="editPostMessage" class="cp-form-label">Nội dung bài viết (Caption / Message)</label>
+                <textarea id="editPostMessage" class="cp-textarea" placeholder="Nội dung bài viết sẽ hiển thị ở đây..."></textarea>
+              </div>
+
+              <div class="cp-form-group">
+                <label for="editPostImageUrl" class="cp-form-label">URL Hình ảnh đính kèm (Tuỳ chọn)</label>
+                <input type="url" id="editPostImageUrl" class="cp-input" placeholder="https://... (URL ảnh công khai hoặc ảnh từ bài gốc)">
+              </div>
+
+              <div class="cp-form-group">
+                <label for="editPostLinkUrl" class="cp-form-label">URL Liên kết (Tuỳ chọn, nếu không có ảnh)</label>
+                <input type="url" id="editPostLinkUrl" class="cp-input" placeholder="https://... (Link bài viết hoặc landing page)">
+              </div>
+
+              <div id="previewMediaContainer" class="cp-preview-media" style="display:none;">
+                <img id="previewMediaImg" src="" alt="Xem trước hình ảnh">
+              </div>
+            </div>
+          </div>
+
+          <!-- Card: Chọn Fanpage đích -->
+          <div class="cp-card">
+            <div class="cp-card-header">
+              <h2 class="cp-card-title">
+                <span class="step-num">4</span>
+                <span>Chọn các Fanpage đích cần đăng</span>
+              </h2>
+              <div style="display:flex;gap:8px;">
+                <button id="selectAllPagesBtn" class="btn btn-secondary btn-sm" type="button">Chọn tất cả</button>
+                <button id="deselectAllPagesBtn" class="btn btn-secondary btn-sm" type="button">Bỏ chọn</button>
+              </div>
+            </div>
+
+            <div id="targetPagesList" class="cp-target-list">
+              <!-- Checkbox items rendered via JS -->
+            </div>
+
+            <div style="margin-top:var(--space-4);padding-top:var(--space-3);border-top:1px solid var(--border-subtle);display:flex;justify-content:space-between;align-items:center;">
+              <span id="selectedCountText" style="font-size:0.85rem;color:var(--text-secondary);">Đã chọn: <strong>0</strong> Fanpage đích</span>
+              <button id="startPublishBtn" class="btn btn-primary" type="button" disabled>
+                <i data-lucide="send"></i>
+                <span>Tiến hành đăng bài</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Card: Tiến trình & Kết quả -->
+          <div id="publishResultsCard" class="cp-card cp-results-card">
+            <div class="cp-card-header">
+              <h2 class="cp-card-title">
+                <i data-lucide="activity"></i>
+                <span>Kết quả đăng bài</span>
+              </h2>
+              <span id="publishStatusBadge" class="badge">Đang xử lý...</span>
+            </div>
+
+            <div class="cp-progress-bar">
+              <div id="publishProgressBar" class="cp-progress-fill"></div>
+            </div>
+
+            <div id="publishResultsList" style="max-height:220px;overflow-y:auto;">
+              <!-- Results items -->
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ========================================================= -->
+    <!-- SECTION 2: AD CREATION STUDIO (4-STEP BATCH WIZARD)       -->
+    <!-- ========================================================= -->
+    <section id="adsSection" style="display:none;">
+      
+      <!-- Studio Stepper Header -->
+      <nav class="studio-stepper" id="studioStepper" aria-label="Các bước tạo quảng cáo">
+        <div class="studio-step-item active" data-step="1" id="stepIndicator1">
+          <span class="step-badge">1</span>
+          <span>Thiết lập Chiến dịch</span>
+        </div>
+        <div class="studio-step-divider"></div>
+        <div class="studio-step-item" data-step="2" id="stepIndicator2">
+          <span class="step-badge">2</span>
+          <span>Nhóm & Đối tượng</span>
+        </div>
+        <div class="studio-step-divider"></div>
+        <div class="studio-step-item" data-step="3" id="stepIndicator3">
+          <span class="step-badge">3</span>
+          <span>Soạn nhiều nội dung Ads</span>
+        </div>
+        <div class="studio-step-divider"></div>
+        <div class="studio-step-item" data-step="4" id="stepIndicator4">
+          <span class="step-badge">4</span>
+          <span>Kiểm tra & Tạo hàng loạt</span>
+        </div>
+      </nav>
+
+      <!-- ============================================== -->
+      <!-- BƯỚC 1: THIẾT LẬP CHIẾN DỊCH                   -->
+      <!-- ============================================== -->
+      <div id="studioStep1" class="studio-step-container">
+        <div class="cp-card">
+          <div class="cp-card-header">
+            <h2 class="cp-card-title">
+              <span class="step-num">1</span>
+              <span>Chọn Tài khoản & Thiết lập Chiến dịch</span>
+            </h2>
+            <div class="studio-switch" role="group" aria-label="Loại chiến dịch">
+              <button type="button" class="studio-switch-btn active" id="btnModeExistingCamp">
+                <i data-lucide="folder"></i>
+                <span>Chiến dịch có sẵn</span>
+              </button>
+              <button type="button" class="studio-switch-btn" id="btnModeNewCamp">
+                <i data-lucide="plus-circle"></i>
+                <span>Tạo Chiến dịch mới</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="cp-editor-box">
+            <!-- Chọn Tài khoản -->
+            <div class="cp-form-group">
+              <label for="studioAccountSelect" class="cp-form-label">Tài khoản Quảng cáo đích</label>
+              <select id="studioAccountSelect" class="select-filter" style="width:100%;">
+                <option value="">-- Đang tải tài khoản quảng cáo... --</option>
+              </select>
+            </div>
+
+            <!-- PHƯƠNG ÁN 1A: CHỌN CHIẾN DỊCH CÓ SẴN -->
+            <div id="boxExistingCamp">
+              <div class="cp-form-group">
+                <label for="studioCampaignSelect" class="cp-form-label">Chọn Chiến dịch đích</label>
+                <select id="studioCampaignSelect" class="select-filter" style="width:100%;" disabled>
+                  <option value="">-- Chọn tài khoản ở trên trước --</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- PHƯƠNG ÁN 1B: TẠO CHIẾN DỊCH MỚI -->
+            <div id="boxNewCamp" style="display:none;background:var(--bg-inset);padding:var(--space-4);border-radius:var(--radius-md);border:1px solid var(--border-subtle);">
+              <h3 style="font-size:0.95rem;color:var(--primary-text);margin-top:0;margin-bottom:var(--space-3);display:flex;align-items:center;gap:6px;">
+                <i data-lucide="sparkles" style="width:16px;height:16px;"></i>
+                <span>Bộ tạo tên chuẩn 4 Sản phẩm (BM Ucmas Việt Nam)</span>
+              </h3>
+              
+              <div style="display:grid;grid-template-columns:1fr 2fr;gap:var(--space-3);">
+                <div class="cp-form-group">
+                  <label for="campPrefixInput" class="cp-form-label">Tên người phụ trách / NV</label>
+                  <input type="text" id="campPrefixInput" class="cp-input" value="haicm" placeholder="haicm">
+                </div>
+                <div class="cp-form-group">
+                  <label class="cp-form-label">Chọn Sản phẩm (Tự động nhận diện vào Dashboard)</label>
+                  <div class="product-tag-group" id="campProductTags">
+                    <button type="button" class="product-tag-pill active" data-product="ucmas">UCMAS</button>
+                    <button type="button" class="product-tag-pill" data-product="uckid">UCKID</button>
+                    <button type="button" class="product-tag-pill" data-product="mathca">MATHCA</button>
+                    <button type="button" class="product-tag-pill" data-product="traihe">TRẠI HÈ</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="cp-form-group" style="margin-top:var(--space-3);">
+                <label for="campDescInput" class="cp-form-label">Tên gợi nhớ / Thông điệp chiến dịch</label>
+                <input type="text" id="campDescInput" class="cp-input" value="mess/khaigiang" placeholder="mess/khaigiang hoặc mess/taptrung">
+              </div>
+
+              <div class="cp-form-group" style="margin-top:var(--space-3);">
+                <label for="campFullNamePreview" class="cp-form-label">Tên Chiến dịch hoàn chỉnh trên Meta</label>
+                <input type="text" id="campFullNamePreview" class="cp-input" readonly style="font-weight:600;color:var(--cyan-text);background:var(--bg-card-solid);">
+              </div>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);margin-top:var(--space-3);">
+                <div class="cp-form-group">
+                  <label class="cp-form-label">Mục tiêu chiến dịch (Graph API v21.0)</label>
+                  <input type="text" class="cp-input" value="OUTCOME_ENGAGEMENT (Tin nhắn / Tương tác)" readonly disabled>
+                </div>
+                <div class="cp-form-group">
+                  <label for="campCboBudget" class="cp-form-label">Ngân sách CBO (Tùy chọn, để trống nếu dùng ABO)</label>
+                  <input type="number" id="campCboBudget" class="cp-input" placeholder="Để trống nếu đặt ngân sách ở nhóm" min="50000" step="10000">
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================== -->
+      <!-- BƯỚC 2: THIẾT LẬP NHÓM QUẢNG CÁO & ĐỐI TƯỢNG    -->
+      <!-- ============================================== -->
+      <div id="studioStep2" class="studio-step-container" style="display:none;">
+        <div class="cp-card">
+          <div class="cp-card-header">
+            <h2 class="cp-card-title">
+              <span class="step-num">2</span>
+              <span>Thiết lập Nhóm quảng cáo & Đối tượng (Targeting)</span>
+            </h2>
+            <div class="studio-switch" role="group" aria-label="Loại nhóm quảng cáo">
+              <button type="button" class="studio-switch-btn active" id="btnModeExistingAdset">
+                <i data-lucide="layers"></i>
+                <span>Nhóm có sẵn trong CĐ</span>
+              </button>
+              <button type="button" class="studio-switch-btn" id="btnModeNewAdset">
+                <i data-lucide="plus-circle"></i>
+                <span>Tạo Nhóm mới</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="cp-editor-box">
+            
+            <!-- PHƯƠNG ÁN 2A: CHỌN NHÓM CÓ SẴN (Được chọn nhiều nhóm) -->
+            <div id="boxExistingAdset">
+              <p style="color:var(--text-secondary);font-size:0.875rem;margin-top:0;">
+                Tích chọn các Nhóm quảng cáo đích cần nhân bản nội dung vào:
+              </p>
+              <div id="studioExistingAdsetsList" class="cp-target-list">
+                <div class="cp-empty-state">Vui lòng chọn Chiến dịch ở Bước 1.</div>
+              </div>
+              <div style="font-size:0.85rem;color:var(--text-muted);margin-top:var(--space-2);">
+                Đã chọn: <strong id="studioSelectedAdsetsCount" style="color:var(--primary-text);">0</strong> nhóm đích
+              </div>
+            </div>
+
+            <!-- PHƯƠNG ÁN 2B: TẠO NHÓM MỚI KÈM TARGETING -->
+            <div id="boxNewAdset" style="display:none;background:var(--bg-inset);padding:var(--space-4);border-radius:var(--radius-md);border:1px solid var(--border-subtle);">
+              
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4);">
+                <div class="cp-form-group">
+                  <label for="newAdsetNameInput" class="cp-form-label">Tên Nhóm quảng cáo mới</label>
+                  <input type="text" id="newAdsetNameInput" class="cp-input" value="Nhóm QC - Nữ 25-45 HN" placeholder="Nhập tên nhóm quảng cáo...">
+                </div>
+
+                <div class="cp-form-group">
+                  <label for="newAdsetPageSelect" class="cp-form-label">Fanpage đích nhận tin nhắn</label>
+                  <select id="newAdsetPageSelect" class="select-filter" style="width:100%;">
+                    <option value="">-- Đang tải Fanpage... --</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="cp-form-group" style="margin-top:var(--space-3);">
+                <label for="newAdsetBudget" class="cp-form-label">Ngân sách ngày (ABO - VND)</label>
+                <input type="number" id="newAdsetBudget" class="cp-input" value="100000" min="20000" step="10000">
+              </div>
+
+              <!-- Targeting: Tuổi, Giới tính, Vị trí -->
+              <div class="targeting-grid">
+                
+                <!-- Tuổi -->
+                <div class="cp-form-group">
+                  <label class="cp-form-label">Độ tuổi</label>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <input type="number" id="targetAgeMin" class="cp-input" value="25" min="18" max="65" style="width:80px;">
+                    <span style="color:var(--text-muted);">đến</span>
+                    <input type="number" id="targetAgeMax" class="cp-input" value="45" min="18" max="65" style="width:80px;">
+                    <span style="color:var(--text-muted);font-size:0.8rem;">tuổi</span>
+                  </div>
+                </div>
+
+                <!-- Giới tính -->
+                <div class="cp-form-group">
+                  <label class="cp-form-label">Giới tính</label>
+                  <select id="targetGender" class="select-filter">
+                    <option value="all">Tất cả (Nam & Nữ)</option>
+                    <option value="female" selected>Nữ (Phụ huynh mẹ)</option>
+                    <option value="male">Nam (Phụ huynh bố)</option>
+                  </select>
+                </div>
+
+                <!-- Địa điểm -->
+                <div class="cp-form-group">
+                  <label class="cp-form-label">Khu vực địa lý</label>
+                  <select id="targetLocationPreset" class="select-filter">
+                    <option value="HN" selected>Hà Nội</option>
+                    <option value="HCM">TP. Hồ Chí Minh</option>
+                    <option value="HN_HCM">Hà Nội & TP.HCM</option>
+                    <option value="VN">Toàn quốc (Việt Nam)</option>
+                  </select>
+                </div>
+
+              </div>
+
+              <!-- Vị trí quảng cáo (Placements) -->
+              <div class="cp-form-group" style="margin-top:var(--space-4);">
+                <label class="cp-form-label">Vị trí hiển thị (Placements)</label>
+                <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;">
+                  <label class="placement-check-item">
+                    <input type="radio" name="placementMode" id="placementAdvantage" value="auto" checked style="accent-color:var(--primary);">
+                    <div>
+                      <div style="font-size:0.85rem;font-weight:600;color:var(--text-primary);">Vị trí Advantage+ (Tự động - Khuyên dùng)</div>
+                      <div style="font-size:0.75rem;color:var(--text-muted);">Tối ưu hóa ngân sách và hiển thị trên toàn bộ Facebook, Instagram, Messenger</div>
+                    </div>
+                  </label>
+                  <label class="placement-check-item">
+                    <input type="radio" name="placementMode" id="placementCustom" value="custom" style="accent-color:var(--primary);">
+                    <div>
+                      <div style="font-size:0.85rem;font-weight:600;color:var(--text-primary);">Chỉ Facebook Feed & Reels</div>
+                      <div style="font-size:0.75rem;color:var(--text-muted);">Chỉ hiển thị trên Bảng tin Facebook và Reels</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================== -->
+      <!-- BƯỚC 3: SOẠN NHIỀU NỘI DUNG ADS                 -->
+      <!-- ============================================== -->
+      <div id="studioStep3" class="studio-step-container" style="display:none;">
+        <div class="cp-card">
+          <div class="cp-card-header">
+            <h2 class="cp-card-title">
+              <span class="step-num">3</span>
+              <span>Chuẩn bị Nội dung & Tạo đồng thời nhiều Quảng cáo</span>
+            </h2>
+            <span class="badge" id="studioCreativeCountBadge">0 nội dung sẵn sàng</span>
+          </div>
+
+          <!-- Tab Bar chọn phương thức nội dung -->
+          <div class="creative-tab-bar">
+            <button type="button" class="creative-tab-item active" id="tabContentFromPosts">
+              <i data-lucide="file-text"></i>
+              <span>Cách 1: Chọn nhiều bài viết Fanpage</span>
+            </button>
+            <button type="button" class="creative-tab-item" id="tabContentCustom">
+              <i data-lucide="edit-3"></i>
+              <span>Cách 2: Nhập danh sách nội dung (Ảnh/Caption/Video)</span>
+            </button>
+            <button type="button" class="creative-tab-item" id="tabContentCloneAds">
+              <i data-lucide="copy"></i>
+              <span>Cách 3: Tích chọn nhiều Ads mẫu từ BM</span>
+            </button>
+          </div>
+
+          <!-- NỘI DUNG 3A: CHỌN NHIỀU BÀI TỪ FANPAGE -->
+          <div id="creativeSectionPosts">
+            <div style="display:flex;gap:var(--space-3);align-items:flex-end;margin-bottom:var(--space-3);">
+              <div class="cp-form-group" style="flex:1;">
+                <label for="sourceContentPageSelect" class="cp-form-label">Chọn Fanpage lấy bài viết</label>
+                <select id="sourceContentPageSelect" class="select-filter" style="width:100%;">
+                  <option value="">-- Đang tải Fanpage... --</option>
+                </select>
+              </div>
+              <div style="display:flex;gap:8px;">
+                <button type="button" class="btn btn-secondary btn-sm" id="btnSelectAllPosts">Chọn tất cả</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="btnDeselectAllPosts">Bỏ chọn</button>
+              </div>
+            </div>
+
+            <div id="studioPostsLoading" class="cp-empty-state" style="display:none;">
+              <span class="cp-spinner"></span>
+              <p style="margin-top:8px;">Đang tải bài viết từ Fanpage...</p>
+            </div>
+
+            <div id="studioPostsGrid" class="cp-post-list" style="max-height:360px;">
+              <div class="cp-empty-state">Vui lòng chọn Fanpage để hiển thị danh sách bài đăng.</div>
+            </div>
+          </div>
+
+          <!-- NỘI DUNG 3B: NHẬP DANH SÁCH NỘI DUNG TÙY CHỈNH -->
+          <div id="creativeSectionCustom" style="display:none;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-3);">
+              <p style="font-size:0.875rem;color:var(--text-secondary);margin:0;">
+                Mỗi thẻ bên dưới tương ứng với <strong>1 quảng cáo độc lập</strong> sẽ được tạo ra:
+              </p>
+              <button type="button" class="btn btn-secondary btn-sm" id="btnAddCustomCard">
+                <i data-lucide="plus"></i>
+                <span>Thêm nội dung quảng cáo</span>
+              </button>
+            </div>
+
+            <div id="customCardsContainer">
+              <!-- Render cards dynamically via JS -->
+            </div>
+          </div>
+
+          <!-- NỘI DUNG 3C: TÍCH CHỌN TỪ CÁC ADS MẪU ĐÃ CÓ -->
+          <div id="creativeSectionCloneAds" style="display:none;">
+            <div style="display:flex;gap:var(--space-3);margin-bottom:var(--space-3);">
+              <div class="cp-form-group" style="flex:1;">
+                <label for="cloneAdSourceAdsetSelect" class="cp-form-label">Chọn Nhóm QC mẫu để lấy Ads</label>
+                <select id="cloneAdSourceAdsetSelect" class="select-filter" style="width:100%;">
+                  <option value="">-- Chọn nhóm quảng cáo mẫu --</option>
+                </select>
+              </div>
+            </div>
+
+            <div id="cloneAdsList" class="cp-post-list" style="max-height:360px;">
+              <div class="cp-empty-state">Chọn Nhóm quảng cáo mẫu để hiển thị danh sách ads cần nhân bản.</div>
+            </div>
+          </div>
+
+          <!-- BẢNG XEM TRƯỚC MA TRẬN QUẢNG CÁO SẼ TẠO -->
+          <div style="margin-top:var(--space-5);padding-top:var(--space-4);border-top:1px solid var(--border-subtle);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-3);">
+              <h3 style="font-size:0.95rem;color:var(--text-primary);margin:0;display:flex;align-items:center;gap:6px;">
+                <i data-lucide="layout-grid" style="width:16px;height:16px;color:var(--primary);"></i>
+                <span>Ma trận Quảng cáo sẽ được sinh ra</span>
+              </h3>
+              <span id="matrixSummaryBadge" style="font-size:0.85rem;color:var(--cyan-text);font-weight:600;">
+                0 quảng cáo
+              </span>
+            </div>
+
+            <div id="studioMatrixPreview" class="matrix-preview-grid">
+              <div class="cp-empty-state" style="grid-column:1/-1;">
+                Chưa có nội dung nào được chọn. Hãy chọn bài viết hoặc thêm nội dung ở trên.
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ============================================== -->
+      <!-- BƯỚC 4: KIỂM TRA & THỰC THI HÀNG LOẠT           -->
+      <!-- ============================================== -->
+      <div id="studioStep4" class="studio-step-container" style="display:none;">
+        <div class="cp-card">
+          <div class="cp-card-header">
+            <h2 class="cp-card-title">
+              <span class="step-num">4</span>
+              <span>Kiểm tra Tổng thể & Tiến hành Tạo Quảng Cáo</span>
+            </h2>
+            <span class="badge badge-success">Sẵn sàng thực thi</span>
+          </div>
+
+          <!-- Tóm tắt kế hoạch tạo -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:var(--space-3);margin-bottom:var(--space-4);">
+            <div style="background:var(--bg-input);padding:var(--space-3);border-radius:var(--radius-sm);border:1px solid var(--border-subtle);">
+              <div style="font-size:0.75rem;color:var(--text-muted);">Tài khoản quảng cáo</div>
+              <div id="sumAccountName" style="font-weight:600;color:var(--text-primary);margin-top:2px;">--</div>
+            </div>
+            <div style="background:var(--bg-input);padding:var(--space-3);border-radius:var(--radius-sm);border:1px solid var(--border-subtle);">
+              <div style="font-size:0.75rem;color:var(--text-muted);">Chiến dịch</div>
+              <div id="sumCampaignName" style="font-weight:600;color:var(--text-primary);margin-top:2px;">--</div>
+            </div>
+            <div style="background:var(--bg-input);padding:var(--space-3);border-radius:var(--radius-sm);border:1px solid var(--border-subtle);">
+              <div style="font-size:0.75rem;color:var(--text-muted);">Nhóm quảng cáo đích</div>
+              <div id="sumAdsetName" style="font-weight:600;color:var(--text-primary);margin-top:2px;">--</div>
+            </div>
+            <div style="background:var(--bg-input);padding:var(--space-3);border-radius:var(--radius-sm);border:1px solid var(--border-subtle);">
+              <div style="font-size:0.75rem;color:var(--text-muted);">Tổng số quảng cáo</div>
+              <div id="sumTotalAdsCount" style="font-size:1.15rem;font-weight:700;color:var(--primary-text);margin-top:2px;">0 Ads</div>
+            </div>
+          </div>
+
+          <!-- Khối cảnh báo an toàn -->
+          <div style="background:rgba(245, 158, 11, 0.1);border:1px solid rgba(245, 158, 11, 0.3);border-radius:var(--radius-sm);padding:var(--space-3);margin-bottom:var(--space-4);display:flex;align-items:center;gap:12px;">
+            <i data-lucide="shield-alert" style="color:var(--warning);width:24px;height:24px;flex-shrink:0;"></i>
+            <div style="font-size:0.85rem;color:var(--text-secondary);line-height:1.4;">
+              <strong style="color:var(--warning);">Quy tắc an toàn tuyệt đối:</strong> Toàn bộ Chiến dịch, Nhóm và Quảng cáo tạo mới được đặt ở trạng thái <strong>PAUSED (Tạm dừng)</strong>. Quá trình tạo có giãn cách 1.5s - 2s giữa các lệnh gọi Meta API để bảo vệ tài khoản khỏi checkpoint / rate-limit.
+            </div>
+          </div>
+
+          <!-- Bảng điều khiển tiến trình thực thi -->
+          <div id="studioProgressArea" style="display:none;margin-top:var(--space-4);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-2);">
+              <span id="studioProgressStatusText" style="font-size:0.9rem;font-weight:600;color:var(--text-primary);">Đang khởi tạo...</span>
+              <span id="studioProgressPercentText" style="font-size:0.85rem;color:var(--primary-text);font-weight:700;">0%</span>
+            </div>
+            <div class="cp-progress-bar">
+              <div id="studioProgressBarFill" class="cp-progress-fill"></div>
+            </div>
+            <div id="studioExecutionLog" style="max-height:240px;overflow-y:auto;background:var(--bg-inset);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:var(--space-3);font-family:monospace;font-size:0.8rem;line-height:1.6;">
+              <!-- Execution log rows -->
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Studio Bottom Navigation Bar -->
+      <footer class="studio-nav-bar">
+        <button type="button" class="btn btn-secondary" id="btnStudioBack" style="display:none;">
+          <i data-lucide="arrow-left"></i>
+          <span>Quay lại</span>
+        </button>
+        <div style="margin-left:auto;display:flex;gap:12px;">
+          <button type="button" class="btn btn-primary" id="btnStudioNext">
+            <span>Tiếp theo</span>
+            <i data-lucide="arrow-right"></i>
+          </button>
+          <button type="button" class="btn btn-primary" id="btnStudioExecute" style="display:none;background:var(--success);border-color:var(--success);">
+            <i data-lucide="rocket"></i>
+            <span>Tiến hành tạo Quảng cáo (PAUSED)</span>
+          </button>
+        </div>
+      </footer>
+
+    </section>
+
+  </div>
+
+  <!-- Confirmation Modal -->
+  <div id="confirmModal" class="modal-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
+    <div class="modal-dialog" style="background:var(--bg-card-solid);border:1px solid var(--border-strong);border-radius:var(--radius-lg);padding:var(--space-5);max-width:480px;width:90%;box-shadow:var(--shadow-card);">
+      <h3 id="confirmModalTitle" style="margin-top:0;font-size:1.15rem;color:var(--text-primary);display:flex;align-items:center;gap:8px;">
+        <i data-lucide="help-circle" style="color:var(--warning);"></i>
+        <span>Xác nhận đăng bài</span>
+      </h3>
+      <p id="confirmModalDesc" style="color:var(--text-secondary);font-size:0.9rem;line-height:1.5;">
+        Bạn chuẩn bị đăng bài viết này lên <strong>3 Fanpage</strong>. Quá trình đăng sẽ có độ giãn cách 1.5s giữa các trang.
+      </p>
+      <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:var(--space-5);">
+        <button id="cancelModalBtn" class="btn btn-secondary" type="button">Hủy bỏ</button>
+        <button id="confirmExecuteBtn" class="btn btn-primary" type="button">Xác nhận thực hiện</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cross-post Client Script -->
+  <script src="/js/cross-post-app.js"></script>
+</body>
+</html>
