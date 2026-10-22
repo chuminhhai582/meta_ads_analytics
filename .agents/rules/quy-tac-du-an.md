@@ -61,7 +61,7 @@ Bao gồm nhưng không giới hạn:
 ## 5. Tiêu chuẩn kỹ thuật
 
 - Stack: Node.js (ESM) + Express 5, frontend HTML/CSS/JS thuần, Chart.js, Lucide icons. Không thêm framework/Tailwind nếu chưa được duyệt.
-- Màu sắc, bo góc, khoảng cách: dùng **CSS variables trong `:root` của `public/css/style.css`**; hạn chế inline style mới.
+- Màu sắc, bo góc, khoảng cách: dùng **CSS variables trong `:root` của `public/css/style.css`**. Style inline chỉ được dùng cho giá trị **tính ở runtime** (`width: ${pct}%`, `background: ${color}`). Mọi thuộc tính khác phải viết thành class trong file CSS để đảm bảo tính nhất quán của design system.
 - Gọi Meta Graph API qua `callGraphApi()` trong `src/meta-api.js`; luôn xử lý lỗi theo từng tài khoản để 1 tài khoản lỗi không làm hỏng toàn bộ.
 - Lọc trạng thái "đang chạy" dùng `effective_status`, không dùng `status`.
 - Mọi element tương tác trong HTML phải có `id` duy nhất.

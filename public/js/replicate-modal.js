@@ -537,25 +537,18 @@
     const resultsList = document.getElementById('repResultsList');
     if (progressFill) progressFill.style.width = '10%';
 
-    try {
-      const res = await fetch('/api/cp/bulk-replicate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Internal-Token': mState.sessionToken },
-        body: JSON.stringify({ items })
-      });
-
-      if (progressFill) progressFill.style.width = '100%';
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'Lỗi');
-
-      let rHtml = `<div style="background:var(--bg-input);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px;">
-        <strong style="color:var(--text-primary);">Kết quả:</strong>
-        <span style="color:var(--success-text);margin-left:8px;">✅ ${data.summary.success} thành công</span>
-        ${data.summary.failed > 0 ? `<span style="color:var(--danger-text);margin-left:8px;">❌ ${data.summary.failed} thất bại</span>` : ''}
-      </div>`;
-
-      data.results.forEach(r => {
-        r.targets.forEach(t => {
+    function renderPartialResults(resultsListEl, results, summary) {
+      if (!resultsListEl) return;
+      let rHtml = '';
+      if (summary) {
+        rHtml += `<div style="background:var(--bg-input);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px;">
+          <strong style="color:var(--text-primary);">Kết quả:</strong>
+          <span style="color:var(--success-text);margin-left:8px;">✅ ${summary.success || 0} thành công</span>
+          ${summary.failed > 0 ? `<span style="color:var(--danger-text);margin-left:8px;">❌ ${summary.failed} thất bại</span>` : ''}
+        </div>`;
+      }
+      (results || []).forEach(r => {
+        (r.targets || []).forEach(t => {
           const label = t.success
             ? `${esc(t.targetName||'')} — Đã tạo QC (PAUSED)${t.targetingCloned ? ' + Targeting' : ''}`
             : `${esc(t.targetName||t.targetId)} — ${esc(t.error)}`;
@@ -564,8 +557,45 @@
           </div>`;
         });
       });
+      resultsListEl.innerHTML = rHtml;
+    }
 
-      resultsList.innerHTML = rHtml;
+    try {
+      const initRes = await fetch('/api/cp/bulk-replicate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Internal-Token': mState.sessionToken },
+        body: JSON.stringify({ items })
+      });
+      const initData = await initRes.json();
+      if (!initData.ok) throw new Error(initData.error || 'Lỗi khởi tạo nhân bản');
+
+      const { jobId, total } = initData;
+
+      stepContent.insertAdjacentHTML('beforeend',
+        `<p style="font-size:0.74rem;color:var(--text-muted);margin-top:8px;">
+           Mã tiến trình: <code>${esc(jobId)}</code> — nếu mất kết nối, mở
+           <code>/api/cp/job/${esc(jobId)}</code> để xem kết quả.
+         </p>`);
+
+      let job = null;
+      while (true) {
+        await new Promise(r => setTimeout(r, 1500));
+        const jRes = await fetch(`/api/cp/job/${jobId}`);
+        job = await jRes.json();
+        if (!job.ok) throw new Error(job.error || 'Lỗi kiểm tra tiến trình');
+
+        if (progressFill) progressFill.style.width = `${Math.round((job.done / total) * 100)}%`;
+        renderPartialResults(resultsList, job.results, job.summary);
+
+        if (job.status !== 'running') {
+          if (job.status === 'error') throw new Error(job.error);
+          break;
+        }
+      }
+
+      if (progressFill) progressFill.style.width = '100%';
+      renderPartialResults(resultsList, job.results, job.summary);
+
       nextBtn.style.display = 'inline-flex';
       nextBtn.textContent = 'Đóng';
       nextBtn.disabled = false;

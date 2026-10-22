@@ -17,7 +17,9 @@
   /* Text */
   --text-primary: #f8fafc;
   --text-secondary: #94a3b8;
-  --text-muted: #64748b;
+  /* Nâng từ #64748b (≈4,2:1 — dưới ngưỡng AA 4,5:1) lên ≈5,8:1. Màu này dùng
+     cho .sub-stat 10,5px và .enrolled-date 11px — đúng chỗ chữ nhỏ nhất. */
+  --text-muted: #7c8ba3;
 
   /* Brand & semantic */
   --primary: #0080fb;
@@ -584,6 +586,21 @@ body.is-syncing .report-content { opacity: 0.55; pointer-events: none; transitio
   border-radius: 3px;
 }
 
+/* Ẩn hiện nhóm cột trong bảng */
+.data-table.hide-platform [data-col="platform"] { display: none; }
+.data-table.hide-funnel   [data-col="funnel"]   { display: none; }
+.data-table.hide-meta     [data-col="meta"]     { display: none; }
+
+.col-group-toggle { display: flex; gap: 4px; }
+.chip {
+  padding: 4px 10px; border-radius: var(--radius-full);
+  border: 1px solid var(--border-subtle); background: transparent;
+  color: var(--text-muted); font-size: 0.76rem; font-weight: 600; cursor: pointer;
+  transition: var(--transition-fast);
+}
+.chip.active { background: var(--surface-2); color: var(--text-primary); border-color: var(--border-medium); }
+.chip:focus-visible { outline: 2px solid var(--primary-text); outline-offset: 2px; }
+
 /* Sticky Columns for Table: Checkbox (col 1) + Name (col 2) */
 .data-table th.th-checkbox,
 .data-table td:first-child {
@@ -847,7 +864,7 @@ body.is-syncing .report-content { opacity: 0.55; pointer-events: none; transitio
   font-family: var(--font-mono);
 }
 .enrolled-date {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 .enrolled-rev {
@@ -906,7 +923,7 @@ body.is-syncing .report-content { opacity: 0.55; pointer-events: none; transitio
 
 .sub-stat {
   display: block;
-  font-size: 10.5px;
+  font-size: 11.5px;
   color: var(--text-muted);
   margin-top: 2px;
   font-weight: 500;
@@ -984,5 +1001,40 @@ body.is-syncing .report-content { opacity: 0.55; pointer-events: none; transitio
   border: 1px solid rgba(0, 128, 251, 0.4) !important;
   backdrop-filter: blur(18px) !important;
   -webkit-backdrop-filter: blur(18px) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .card-surface:hover, .product-card:hover, .enrolled-card:hover { transform: none; }
+}
+
+@media print {
+  /* Giấy trắng mực đen: nền tối + glow in ra vừa tốn mực vừa khó đọc.
+     Dashboard này hay được in / chụp để mang vào họp. */
+  .bg-glow, .top-progress, .toast-container, .replicate-toolbar,
+  .header-tool-group, #syncBtn, #navCrossPostBtn, .modal-overlay,
+  .col-group-toggle, .table-controls { display: none !important; }
+
+  body { background: #fff; color: #000; }
+
+  .card-surface, .app-header, .kpi-card, .chart-card, .table-section, .ai-hero-card {
+    background: #fff !important;
+    border: 1px solid #999 !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .table-responsive { overflow: visible !important; }
+  .data-table { font-size: 9pt; }
+  thead { display: table-header-group; }   /* lặp tiêu đề mỗi trang */
+  tr { page-break-inside: avoid; }
+
+  /* Cột ghim không có nghĩa trên giấy */
+  .data-table th, .data-table td { position: static !important; }
 }
 

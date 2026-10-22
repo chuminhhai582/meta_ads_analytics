@@ -91,3 +91,14 @@ tr.row-selected td { border-color: rgba(0, 128, 251, 0.2); }
 
 .rep-progress-bar { height: 6px; background: var(--bg-inset); border-radius: var(--radius-full); overflow: hidden; margin-bottom: var(--space-3); }
 .rep-progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--primary), var(--cyan-text)); transition: width 0.4s ease; }
+
+/* Thay thế các style inline lặp lại trong replicate-modal.js */
+.rep-summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.rep-stat-box {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+}
+.rep-hint { font-size: 0.78rem; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+

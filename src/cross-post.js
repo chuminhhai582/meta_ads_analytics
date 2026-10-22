@@ -9,12 +9,41 @@
  */
 
 import express from 'express';
+import crypto from 'node:crypto';
 import { config } from './config.js';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const crossPostRouter = express.Router();
+
+/**
+ * server.js bơm hàm đọc rawReport vào đây khi khởi động (P-05).
+ * Tránh đọc + parse lại 2 MB JSON (14,7 ms) cho dữ liệu đã nằm trong RAM.
+ */
+let getRawReport = () => null;
+export function setRawReportProvider(fn) { getRawReport = fn; }
+
+/**
+ * Các việc tạo hàng loạt chạy 30–60 s. Giữ trạng thái ở server để client hỏi
+ * được tiến độ, và để kết quả không mất khi rớt kết nối giữa đường (F-04).
+ * Job tự hết hạn sau 1 giờ để Map không phình mãi.
+ */
+const jobs = new Map();
+const JOB_TTL_MS = 3600000;
+
+function newJob(total) {
+  const id = crypto.randomUUID();
+  jobs.set(id, { status: 'running', done: 0, total, results: [], error: null, at: Date.now() });
+  for (const [k, v] of jobs) if (Date.now() - v.at > JOB_TTL_MS) jobs.delete(k);
+  return id;
+}
+
+crossPostRouter.get('/job/:jobId', (req, res) => {
+  const job = jobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ ok: false, error: 'Không tìm thấy tiến trình (có thể đã hết hạn).' });
+  res.json({ ok: true, ...job });
+});
 
 const BASE_URL = 'https://graph.facebook.com';
 const API_VERSION = config.apiVersion || 'v21.0';
@@ -218,12 +247,14 @@ async function fetchAndCachePages() {
   // Fetch ad accounts cùng lúc
   try {
     const accResult = await callMeta('me/adaccounts', {
-      params: { fields: 'id,account_id,name,account_status', limit: 100 }
+      params: { fields: 'id,account_id,name,account_status,currency', limit: 100 }
     });
     adAccountsCache = (accResult.data || []).map(a => ({
       id: a.id,
       accountId: a.account_id || a.id.replace(/^act_/, ''),
-      name: a.name
+      name: a.name,
+      status: a.account_status,
+      currency: a.currency || 'VND'
     }));
     saveAccountsCache();
     console.log(`[CrossPost] Cache cập nhật: ${pageCache.size} pages, ${adAccountsCache.length} ad accounts.`);
@@ -292,14 +323,19 @@ crossPostRouter.post('/refresh-cache', async (req, res) => {
 
 /**
  * GET /api/cp/ad-accounts
- * Trả về danh sách ad accounts (từ cache)
+ * Trả về danh sách ad accounts (từ cache hoặc tự làm mới nếu rỗng)
  */
-crossPostRouter.get('/ad-accounts', (req, res) => {
-  res.json({
-    ok: true,
-    accounts: adAccountsCache,
-    cacheAge: cacheUpdatedAt ? `${Math.round((Date.now() - cacheUpdatedAt) / 60000)} phút trước` : 'Chưa có'
-  });
+crossPostRouter.get('/ad-accounts', async (req, res) => {
+  try {
+    if (adAccountsCache.length === 0) await fetchAndCachePages();
+    res.json({
+      ok: true,
+      accounts: adAccountsCache,
+      cacheAge: cacheUpdatedAt ? `${Math.round((Date.now() - cacheUpdatedAt) / 60000)} phút trước` : 'Chưa có'
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 /**
@@ -509,35 +545,6 @@ crossPostRouter.post('/publish', withLock('publish'), async (req, res) => {
 // -------------------------------------------------------------
 // ROUTES: AD ACCOUNTS & AD CREATIVE REPLICATION (PHASE 2)
 // -------------------------------------------------------------
-
-/**
- * GET /api/cp/ad-accounts
- * Danh sách tài khoản quảng cáo người dùng quản lý
- */
-crossPostRouter.get('/ad-accounts', async (req, res) => {
-  try {
-    const result = await callMeta('/me/adaccounts', {
-      params: {
-        fields: 'id,name,account_id,account_status,currency,amount_spent',
-        limit: 50
-      }
-    });
-
-    const accounts = (result.data || []).map(a => ({
-      id: a.id,
-      accountId: a.account_id,
-      name: a.name || `Tài khoản ${a.account_id}`,
-      status: a.account_status,
-      currency: a.currency,
-      amountSpent: a.amount_spent
-    }));
-
-    res.json({ ok: true, accounts });
-  } catch (err) {
-    console.error('[CrossPost] Lỗi lấy danh sách tài khoản ads:', err.message);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
 
 /**
  * GET /api/cp/ad-accounts/:accountId/campaigns
@@ -1025,15 +1032,15 @@ crossPostRouter.post('/analyze-campaigns', async (req, res) => {
     return res.status(400).json({ ok: false, error: `Mỗi lần phân tích tối đa ${SAFETY_LIMITS.ANALYZE_CAMPAIGNS_MAX} chiến dịch.` });
   }
 
-  // Cần biết campaign thuộc ad account nào → đọc từ data lake
+  // Cần biết campaign thuộc ad account nào → đọc từ provider trong RAM (P-05)
   let campaignAccountMap = new Map();
   try {
-    const raw = JSON.parse(readFileSync(join(DATA_DIR, 'latest_insights.json'), 'utf8'));
-    for (const c of (raw.campaigns || [])) {
+    const raw = getRawReport() || JSON.parse(readFileSync(join(DATA_DIR, 'latest_insights.json'), 'utf8'));
+    for (const c of (raw?.campaigns || [])) {
       if (c.id && c.accountId) campaignAccountMap.set(c.id, c.accountId);
     }
   } catch (e) {
-    console.warn('[CrossPost] Không đọc được campaign-account map từ data lake:', e.message);
+    console.warn('[CrossPost] Không đọc được campaign-account map:', e.message);
   }
 
   const allAds = [];
@@ -1174,6 +1181,236 @@ crossPostRouter.post('/analyze-campaigns', async (req, res) => {
  *
  * An toàn: max 10 items, delay 2-3s, PAUSED, mutex
  */
+/**
+ * Hàm thực thi nhân bản hàng loạt ngầm, cập nhật tiến độ vào job (F-04).
+ */
+async function runBulkReplicate(items, job) {
+  // Đảm bảo page token sẵn sàng trong RAM
+  try { await ensurePageTokens(); } catch (e) { /* ignore */ }
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const result = { adId: item.adId, type: item.type, targets: [] };
+
+    if (item.type === 'cross_account_replicate') {
+      const targetAccId = item.targetAccountId;
+      const targetPageId = item.targetPageId;
+      const adsetInfo = item.adsetInfo || null;
+      const budgetType = item.budgetType || 'daily_budget';
+      const budgetAmount = item.budgetAmount || '200000';
+      const creative = item.creative || {};
+
+      if (!targetAccId || !targetPageId) {
+        result.targets.push({
+          targetId: targetAccId || '?', success: false,
+          error: 'Thiếu tài khoản hoặc fanpage đích.'
+        });
+        job.results.push(result);
+        job.done += 1;
+        continue;
+      }
+
+      const targetPage = pageCache.get(targetPageId);
+      const targetPageName = targetPage?.name || targetPageId;
+
+      try {
+        // ① TẠO CAMPAIGN (PAUSED)
+        const campName = `[Nhân bản] ${item.campaignName || item.adId}`;
+        const newCampaign = await callMeta(`act_${targetAccId}/campaigns`, {
+          method: 'POST',
+          body: {
+            name: campName,
+            objective: 'OUTCOME_ENGAGEMENT',
+            status: 'PAUSED',
+            special_ad_categories: []
+          }
+        });
+        const newCampId = newCampaign.id;
+        console.log(`[BulkReplicate] ① Campaign: ${newCampId}`);
+
+        await new Promise(r => setTimeout(r, 2000));
+
+        // ② TẠO ADSET (PAUSED) — clone targeting theo tuỳ chọn
+        const adsetBody = {
+          name: `[Nhân bản] ${adsetInfo?.name || 'Nhóm QC'}`,
+          campaign_id: newCampId,
+          status: 'PAUSED',
+          optimization_goal: item.optimizationGoal || adsetInfo?.optimizationGoal || 'CONVERSATIONS',
+          billing_event: item.billingEvent || adsetInfo?.billingEvent || 'IMPRESSIONS',
+          [budgetType]: String(budgetAmount)
+        };
+
+        if (item.clonedTargeting && Object.keys(item.clonedTargeting).length > 0) {
+          adsetBody.targeting = item.clonedTargeting;
+        } else {
+          adsetBody.targeting = {
+            geo_locations: { countries: ['VN'] },
+            age_min: 18,
+            age_max: 65
+          };
+        }
+
+        if (adsetInfo?.promotedObject) {
+          const pObj = { ...adsetInfo.promotedObject };
+          if (pObj.page_id) pObj.page_id = targetPageId;
+          adsetBody.promoted_object = pObj;
+        } else {
+          adsetBody.promoted_object = { page_id: targetPageId };
+        }
+
+        if (adsetInfo?.bidStrategy) {
+          adsetBody.bid_strategy = adsetInfo.bidStrategy;
+        }
+
+        const newAdset = await callMeta(`act_${targetAccId}/adsets`, {
+          method: 'POST',
+          body: adsetBody
+        });
+        const newAdsetId = newAdset.id;
+        console.log(`[BulkReplicate] ② Adset: ${newAdsetId}`);
+
+        await new Promise(r => setTimeout(r, 2000));
+
+        // ③ TẠO CREATIVE — nội dung gốc + page đích
+        let newCreativeId;
+        const storySpec = { page_id: targetPageId };
+
+        if (creative.videoId) {
+          storySpec.video_data = {
+            video_id: creative.videoId,
+            title: creative.title || '',
+            message: creative.body || '',
+            call_to_action: { type: 'SEND_MESSAGE', value: { link: `https://m.me/${targetPageId}` } }
+          };
+          if (creative.imageUrl) {
+            storySpec.video_data.image_url = creative.imageUrl;
+          }
+        } else if (creative.imageUrl) {
+          storySpec.link_data = {
+            message: creative.body || '',
+            name: creative.title || '',
+            picture: creative.imageUrl,
+            link: `https://m.me/${targetPageId}`,
+            call_to_action: { type: 'SEND_MESSAGE' }
+          };
+        } else {
+          storySpec.link_data = {
+            message: creative.body || '',
+            link: `https://m.me/${targetPageId}`,
+            call_to_action: { type: 'SEND_MESSAGE' }
+          };
+        }
+
+        const creativeRes = await callMeta(`act_${targetAccId}/adcreatives`, {
+          method: 'POST',
+          body: {
+            name: `[Nhân bản] ${creative.title || item.campaignName || 'Creative'}`,
+            object_story_spec: storySpec
+          }
+        });
+        newCreativeId = creativeRes.id;
+        console.log(`[BulkReplicate] ③ Creative: ${newCreativeId}`);
+
+        await new Promise(r => setTimeout(r, 2000));
+
+        // ④ TẠO AD (PAUSED)
+        const newAd = await callMeta(`act_${targetAccId}/ads`, {
+          method: 'POST',
+          body: {
+            name: `[Nhân bản] ${item.campaignName || item.adId}`,
+            adset_id: newAdsetId,
+            creative: { creative_id: newCreativeId },
+            status: 'PAUSED'
+          }
+        });
+        console.log(`[BulkReplicate] ④ Ad: ${newAd.id}`);
+
+        result.targets.push({
+          targetId: targetAccId,
+          targetName: `${targetPageName} (TK ${targetAccId})`,
+          success: true,
+          campaignId: newCampId,
+          adsetId: newAdsetId,
+          creativeId: newCreativeId,
+          adId: newAd.id,
+          targetingCloned: Boolean(item.clonedTargeting)
+        });
+
+      } catch (err) {
+        console.error(`[BulkReplicate] Lỗi cross-account ad ${item.adId} → act_${targetAccId}:`, err.message);
+        result.targets.push({
+          targetId: targetAccId,
+          targetName: `${targetPage?.name || targetPageId} (TK ${targetAccId})`,
+          success: false,
+          error: err.message
+        });
+      }
+
+    } else if (item.type === 'page_post') {
+      const targetPageIds = item.targetPageIds || [];
+      const content = item.content || {};
+
+      for (let j = 0; j < targetPageIds.length; j++) {
+        const targetId = targetPageIds[j];
+        const pageInfo = pageCache.get(targetId);
+
+        if (!pageInfo || !pageInfo.accessToken) {
+          result.targets.push({ targetId, targetName: pageInfo?.name || targetId, success: false, error: 'Không có Access Token.' });
+          continue;
+        }
+
+        try {
+          let pub;
+          if (content.imageUrl && content.imageUrl.trim()) {
+            pub = await callMeta(`${targetId}/photos`, {
+              method: 'POST', token: pageInfo.accessToken,
+              body: { url: content.imageUrl.trim(), caption: content.message || '' }
+            });
+          } else {
+            const feedBody = { message: content.message || '' };
+            if (content.link) feedBody.link = content.link;
+            pub = await callMeta(`${targetId}/feed`, {
+              method: 'POST', token: pageInfo.accessToken, body: feedBody
+            });
+          }
+          result.targets.push({ targetId, targetName: pageInfo.name, success: true, postId: pub.id || pub.post_id });
+        } catch (err) {
+          result.targets.push({ targetId, targetName: pageInfo?.name || targetId, success: false, error: err.message });
+        }
+        if (j < targetPageIds.length - 1) await new Promise(r => setTimeout(r, 2500));
+      }
+
+    } else {
+      const targetAdsetIds = item.targetAdsetIds || [];
+      for (let j = 0; j < targetAdsetIds.length; j++) {
+        const tid = targetAdsetIds[j];
+        try {
+          const copyRes = await callMeta(`${item.adId}/copies`, {
+            method: 'POST',
+            body: { adset_id: tid, status_option: 'PAUSED', rename_options: { rename_prefix: '[Nhân bản] ' } }
+          });
+          result.targets.push({ targetId: tid, success: true, copiedAdId: copyRes.copied_ad_id || copyRes.id });
+        } catch (err) {
+          result.targets.push({ targetId: tid, success: false, error: err.message });
+        }
+        if (j < targetAdsetIds.length - 1) await new Promise(r => setTimeout(r, 2500));
+      }
+    }
+
+    job.results.push(result);
+    job.done += 1;
+
+    // Delay 3s giữa các item
+    if (i < items.length - 1) {
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+
+  let totalTargets = 0, totalSuccess = 0;
+  job.results.forEach(r => { r.targets.forEach(t => { totalTargets++; if (t.success) totalSuccess++; }); });
+  job.summary = { totalItems: items.length, totalTargets, success: totalSuccess, failed: totalTargets - totalSuccess };
+}
+
 crossPostRouter.post('/bulk-replicate', async (req, res) => {
   const { items } = req.body;
 
@@ -1187,258 +1424,14 @@ crossPostRouter.post('/bulk-replicate', async (req, res) => {
     return res.status(429).json({ ok: false, error: 'Đang có 1 lệnh nhân bản khác đang chạy. Vui lòng đợi hoàn thành.' });
   }
 
+  const jobId = newJob(items.length);
+  res.json({ ok: true, jobId, total: items.length });
+
   bulkInFlight = true;
-
-  // Đảm bảo page token sẵn sàng trong RAM
-  try { await ensurePageTokens(); } catch (e) { /* ignore */ }
-
-  const results = [];
-
-  try {
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      const result = { adId: item.adId, type: item.type, targets: [] };
-
-      if (item.type === 'cross_account_replicate') {
-        // =================================================================
-        // CROSS-ACCOUNT REPLICATE: Tạo toàn bộ cấu trúc trên TK đích
-        // Campaign (PAUSED) → Adset (clone targeting/audiences/placements)
-        // → Creative (nội dung gốc + page đích) → Ad (PAUSED)
-        // =================================================================
-        const targetAccId = item.targetAccountId;
-        const targetPageId = item.targetPageId;
-        const adsetInfo = item.adsetInfo || null;
-        const budgetType = item.budgetType || 'daily_budget';
-        const budgetAmount = item.budgetAmount || '200000';
-        const creative = item.creative || {};
-
-        if (!targetAccId || !targetPageId) {
-          result.targets.push({
-            targetId: targetAccId || '?', success: false,
-            error: 'Thiếu tài khoản hoặc fanpage đích.'
-          });
-          results.push(result);
-          continue;
-        }
-
-        // Lấy page access token cho page đích
-        const targetPage = pageCache.get(targetPageId);
-        const targetPageToken = targetPage?.accessToken;
-        const targetPageName = targetPage?.name || targetPageId;
-
-        try {
-          // ① TẠO CAMPAIGN (PAUSED)
-          const campName = `[Nhân bản] ${item.campaignName || item.adId}`;
-          const newCampaign = await callMeta(`act_${targetAccId}/campaigns`, {
-            method: 'POST',
-            body: {
-              name: campName,
-              objective: 'OUTCOME_ENGAGEMENT',
-              status: 'PAUSED',
-              special_ad_categories: []
-            }
-          });
-          const newCampId = newCampaign.id;
-          console.log(`[BulkReplicate] ① Campaign: ${newCampId}`);
-
-          await new Promise(r => setTimeout(r, 2000));
-
-          // ② TẠO ADSET (PAUSED) — clone targeting theo tuỳ chọn
-          const adsetBody = {
-            name: `[Nhân bản] ${adsetInfo?.name || 'Nhóm QC'}`,
-            campaign_id: newCampId,
-            status: 'PAUSED',
-            optimization_goal: item.optimizationGoal || adsetInfo?.optimizationGoal || 'CONVERSATIONS',
-            billing_event: item.billingEvent || adsetInfo?.billingEvent || 'IMPRESSIONS',
-            [budgetType]: String(budgetAmount)
-          };
-
-          // Targeting: dùng clonedTargeting đã lọc từ frontend
-          if (item.clonedTargeting && Object.keys(item.clonedTargeting).length > 0) {
-            adsetBody.targeting = item.clonedTargeting;
-          } else {
-            // Mặc định targeting rộng nhất (VN, 18-65)
-            adsetBody.targeting = {
-              geo_locations: { countries: ['VN'] },
-              age_min: 18,
-              age_max: 65
-            };
-          }
-
-          // Clone promoted_object — thay page_id thành page đích
-          if (adsetInfo?.promotedObject) {
-            const pObj = { ...adsetInfo.promotedObject };
-            if (pObj.page_id) pObj.page_id = targetPageId;
-            adsetBody.promoted_object = pObj;
-          } else {
-            adsetBody.promoted_object = { page_id: targetPageId };
-          }
-
-          // Bid strategy
-          if (adsetInfo?.bidStrategy) {
-            adsetBody.bid_strategy = adsetInfo.bidStrategy;
-          }
-
-          const newAdset = await callMeta(`act_${targetAccId}/adsets`, {
-            method: 'POST',
-            body: adsetBody
-          });
-          const newAdsetId = newAdset.id;
-          console.log(`[BulkReplicate] ② Adset: ${newAdsetId} (targeting: ${item.clonedTargeting ? 'cloned' : 'default'})`);
-
-          await new Promise(r => setTimeout(r, 2000));
-
-          // ③ TẠO CREATIVE — nội dung gốc + page đích
-          let newCreativeId;
-
-          // Xây dựng object_story_spec cho page đích
-          const storySpec = { page_id: targetPageId };
-
-          // Xác định loại creative: ảnh, video, hoặc text
-          if (creative.videoId) {
-            // Video ad
-            storySpec.video_data = {
-              video_id: creative.videoId,
-              title: creative.title || '',
-              message: creative.body || '',
-              call_to_action: { type: 'SEND_MESSAGE', value: { link: `https://m.me/${targetPageId}` } }
-            };
-            if (creative.imageUrl) {
-              storySpec.video_data.image_url = creative.imageUrl; // thumbnail
-            }
-          } else if (creative.imageUrl) {
-            // Image ad — dùng link_data với image
-            storySpec.link_data = {
-              message: creative.body || '',
-              name: creative.title || '',
-              picture: creative.imageUrl,
-              link: `https://m.me/${targetPageId}`,
-              call_to_action: { type: 'SEND_MESSAGE' }
-            };
-          } else {
-            // Text-only ad
-            storySpec.link_data = {
-              message: creative.body || '',
-              link: `https://m.me/${targetPageId}`,
-              call_to_action: { type: 'SEND_MESSAGE' }
-            };
-          }
-
-          const creativeRes = await callMeta(`act_${targetAccId}/adcreatives`, {
-            method: 'POST',
-            body: {
-              name: `[Nhân bản] ${creative.title || item.campaignName || 'Creative'}`,
-              object_story_spec: storySpec
-            }
-          });
-          newCreativeId = creativeRes.id;
-          console.log(`[BulkReplicate] ③ Creative: ${newCreativeId}`);
-
-          await new Promise(r => setTimeout(r, 2000));
-
-          // ④ TẠO AD (PAUSED)
-          const newAd = await callMeta(`act_${targetAccId}/ads`, {
-            method: 'POST',
-            body: {
-              name: `[Nhân bản] ${item.campaignName || item.adId}`,
-              adset_id: newAdsetId,
-              creative: { creative_id: newCreativeId },
-              status: 'PAUSED'
-            }
-          });
-          console.log(`[BulkReplicate] ④ Ad: ${newAd.id}`);
-
-          result.targets.push({
-            targetId: targetAccId,
-            targetName: `${targetPageName} (TK ${targetAccId})`,
-            success: true,
-            campaignId: newCampId,
-            adsetId: newAdsetId,
-            creativeId: newCreativeId,
-            adId: newAd.id,
-            targetingCloned: Boolean(item.clonedTargeting)
-          });
-
-        } catch (err) {
-          console.error(`[BulkReplicate] Lỗi cross-account ad ${item.adId} → act_${targetAccId}:`, err.message);
-          result.targets.push({
-            targetId: targetAccId,
-            targetName: `${targetPage?.name || targetPageId} (TK ${targetAccId})`,
-            success: false,
-            error: err.message
-          });
-        }
-
-      } else if (item.type === 'page_post') {
-        // --- LEGACY: Đăng chéo nội dung sang Fanpage đích ---
-        const targetPageIds = item.targetPageIds || [];
-        const content = item.content || {};
-
-        for (let j = 0; j < targetPageIds.length; j++) {
-          const targetId = targetPageIds[j];
-          const pageInfo = pageCache.get(targetId);
-
-          if (!pageInfo || !pageInfo.accessToken) {
-            result.targets.push({ targetId, targetName: pageInfo?.name || targetId, success: false, error: 'Không có Access Token.' });
-            continue;
-          }
-
-          try {
-            let pub;
-            if (content.imageUrl && content.imageUrl.trim()) {
-              pub = await callMeta(`${targetId}/photos`, {
-                method: 'POST', token: pageInfo.accessToken,
-                body: { url: content.imageUrl.trim(), caption: content.message || '' }
-              });
-            } else {
-              const feedBody = { message: content.message || '' };
-              if (content.link) feedBody.link = content.link;
-              pub = await callMeta(`${targetId}/feed`, {
-                method: 'POST', token: pageInfo.accessToken, body: feedBody
-              });
-            }
-            result.targets.push({ targetId, targetName: pageInfo.name, success: true, postId: pub.id || pub.post_id });
-          } catch (err) {
-            result.targets.push({ targetId, targetName: pageInfo?.name || targetId, success: false, error: err.message });
-          }
-          if (j < targetPageIds.length - 1) await new Promise(r => setTimeout(r, 2500));
-        }
-
-      } else {
-        // --- LEGACY: Direct Ad copy ---
-        const targetAdsetIds = item.targetAdsetIds || [];
-        for (let j = 0; j < targetAdsetIds.length; j++) {
-          const tid = targetAdsetIds[j];
-          try {
-            const copyRes = await callMeta(`${item.adId}/copies`, {
-              method: 'POST',
-              body: { adset_id: tid, status_option: 'PAUSED', rename_options: { rename_prefix: '[Nhân bản] ' } }
-            });
-            result.targets.push({ targetId: tid, success: true, copiedAdId: copyRes.copied_ad_id || copyRes.id });
-          } catch (err) {
-            result.targets.push({ targetId: tid, success: false, error: err.message });
-          }
-          if (j < targetAdsetIds.length - 1) await new Promise(r => setTimeout(r, 2500));
-        }
-      }
-
-      results.push(result);
-
-      // Delay 3s giữa các item
-      if (i < items.length - 1) {
-        await new Promise(r => setTimeout(r, 3000));
-      }
-    }
-  } finally {
-    bulkInFlight = false;
-  }
-
-  let totalTargets = 0, totalSuccess = 0;
-  results.forEach(r => { r.targets.forEach(t => { totalTargets++; if (t.success) totalSuccess++; }); });
-
-  res.json({
-    ok: true,
-    summary: { totalItems: items.length, totalTargets, success: totalSuccess, failed: totalTargets - totalSuccess },
-    results
-  });
+  const job = jobs.get(jobId);
+  runBulkReplicate(items, job)
+    .then(() => { job.status = 'done'; })
+    .catch(err => { job.status = 'error'; job.error = err.message; })
+    .finally(() => { bulkInFlight = false; });
 });
+

@@ -3,18 +3,20 @@ import path from 'path';
 import fs from 'fs';
 import zlib from 'zlib';
 import { config, ROOT_DIR, updateEnvFile, validateConfigInput, SESSION_TOKEN } from './config.js';
-import { fetchRawReport } from './meta-api.js';
+import { fetchRawReport, SNAPSHOT_VERSION, SNAPSHOT_MIN_SUPPORTED } from './meta-api.js';
 import { buildView, DATE_PRESETS } from './report.js';
 import { generateAnalysis } from './ai-analyst.js';
 import {
   saveReportFiles, convertToCsv, campaignFields, dailyFields, CSV_BOM
 } from './export-csv.js';
 import { fetchGoogleSheetLeads } from './google-sheet.js';
-import { crossPostRouter } from './cross-post.js';
+import { crossPostRouter, setRawReportProvider } from './cross-post.js';
 
 const dataDir = path.resolve(ROOT_DIR, 'data');
 const publicDir = path.resolve(ROOT_DIR, 'public');
 
+// 32 bản × ~42 KB ≈ 1,3 MB sau khi P-01 lọc chiến dịch rỗng khỏi payload.
+// Nếu payload phình lại, tính lại con số này.
 const VIEW_CACHE_MAX = 32;
 
 const app = express();
@@ -72,11 +74,22 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.static(publicDir));
+app.use(express.static(publicDir, {
+  // Các asset được version hoá bằng ?v= trong HTML, nên cache dài hạn an toàn
+  // và không còn phải lo trình duyệt giữ stylesheet cũ sau khi sửa.
+  setHeaders(res, filePath) {
+    if (/\.(css|js|png|ico|woff2?)$/.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  }
+}));
 
-// Raw report cached in memory (format version 3, see PROJECT_CONTEXT.md §7)
+// Raw report cached in memory (snapshot schema v4, xem PROJECT_CONTEXT.md §7)
 let rawReport = null;
 let syncInFlight = null;
+
+// Cung cấp rawReport trong RAM cho cross-post module để tránh parse lại từ disk (P-05)
+setRawReportProvider(() => rawReport);
 
 /** product|accountId|datePreset → { view, analysis }. Cleared whenever rawReport changes. */
 const viewCache = new Map();
@@ -118,8 +131,11 @@ function loadSnapshot() {
       // v3: có adMap nhưng chưa có coverage → lần đồng bộ sau sẽ kéo lại toàn bộ.
       // v4: có coverage → đồng bộ chỉ lấy phần mới.
       // Bản cũ vẫn hiển thị được; buildView tự thêm ghi chú nhắc đồng bộ lại.
-      if (parsed.version >= 2 && parsed.version <= 4) rawReport = parsed;
-      else console.warn(`[Server] Bỏ qua snapshot schema v${parsed.version} (không hỗ trợ).`);
+      if (parsed.version >= SNAPSHOT_MIN_SUPPORTED && parsed.version <= SNAPSHOT_VERSION) {
+        rawReport = parsed;
+      } else {
+        console.warn(`[Server] Bỏ qua snapshot schema v${parsed.version} (hỗ trợ v${SNAPSHOT_MIN_SUPPORTED}–v${SNAPSHOT_VERSION}).`);
+      }
     } catch (e) {
       console.warn('[Server] Lỗi đọc latest_insights.json:', e.message);
     }
@@ -355,7 +371,7 @@ app.get('/api/export/campaigns', (req, res) => {
   sendCsv(
     res,
     `chien_dich_${view.product}_${view.datePreset}.csv`,
-    convertToCsv(view.campaigns, campaignFields(view.fatigueApplicable !== false))
+    convertToCsv(view.campaigns, campaignFields())
   );
 });
 
@@ -386,7 +402,7 @@ app.get('/api/export-csv', (req, res) => {
   sendCsv(
     res,
     `bao_cao_meta_ads_${view.product}_${view.datePreset}.csv`,
-    convertToCsv(view.campaigns, campaignFields(view.fatigueApplicable !== false))
+    convertToCsv(view.campaigns, campaignFields())
   );
 });
 

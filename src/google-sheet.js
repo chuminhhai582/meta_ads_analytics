@@ -210,7 +210,9 @@ export async function fetchGoogleSheetLeads(customUrl = null) {
   };
 
   try {
-    fs.writeFileSync(CACHE_PATH, JSON.stringify(result, null, 2), 'utf-8');
+    // Compact: file này chỉ được nạp lại khi server khởi động, không ai đọc bằng mắt.
+    // Pretty-print làm nó phình 31% (562 KB → 389 KB khi compact).
+    fs.writeFileSync(CACHE_PATH, JSON.stringify(result), 'utf-8');
     console.log(`[Google Sheet] Đã lưu cache ${leads.length} leads vào ${CACHE_PATH}`);
   } catch (e) {
     console.warn('[Google Sheet] Không thể ghi cache:', e.message);

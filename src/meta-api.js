@@ -18,6 +18,16 @@ const BASE_URL = 'https://graph.facebook.com';
 const MAX_PAGES = 50;              // safety cap per paginated request
 const ACCOUNT_CONCURRENCY = 3;     // accounts processed in parallel (rate-limit friendly)
 
+/**
+ * SNAPSHOT_VERSION — phiên bản của data/latest_insights.json (dữ liệu hạt lựu).
+ * VIEW_VERSION     — phiên bản của payload buildView() gửi cho client.
+ *
+ * Hai số này KHÁC nhau và tăng độc lập. Trước đây cả hai bị gọi lẫn là
+ * "format version" với bốn giá trị khác nhau rải trong comment.
+ */
+export const SNAPSHOT_VERSION = 4;
+export const SNAPSHOT_MIN_SUPPORTED = 2;
+
 /** The 4 products the owner wants to analyse (order = display order). */
 export const TARGET_PRODUCTS = [
   { key: 'ucmas', name: 'UCMAS', subtitle: 'Toán tư duy não bộ' },
@@ -388,7 +398,7 @@ function normalizeAccount({ acc, campaigns, adsets, ads, recent, daily, placemen
 
 /**
  * Full sync for the whole BM (accountId = 'ALL') or one account.
- * Returns the RAW report (format version 2) — see PROJECT_CONTEXT.md §7.
+ * Returns the RAW report (snapshot schema v4) — see PROJECT_CONTEXT.md §7.
  */
 export async function fetchRawReport(accountId = 'ALL', options = {}) {
   if (!config.hasToken()) {
@@ -462,7 +472,7 @@ export async function fetchRawReport(accountId = 'ALL', options = {}) {
   );
 
   return {
-    version: 4,
+    version: SNAPSHOT_VERSION,
     fetchedAt: new Date().toISOString(),
     /** Khoảng thời gian kho dữ liệu THỰC SỰ chứa. report.js cảnh báo nếu xem ra ngoài. */
     coverage: { since: targetSince, until: targetUntil },

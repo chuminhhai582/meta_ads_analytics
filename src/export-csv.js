@@ -42,7 +42,7 @@ export function convertToCsv(items, fields) {
 export const CSV_BOM = '﻿';
 
 /** Column set for the campaign export — shared by the CLI and GET /api/export/campaigns. */
-export function campaignFields(fatigueApplicable = true) {
+export function campaignFields() {
   return [
     { key: 'id', label: 'Campaign ID' },
     { key: 'name', label: 'Tên chiến dịch' },
@@ -69,8 +69,8 @@ export function campaignFields(fatigueApplicable = true) {
     { key: 'ctr', label: 'CTR (%)' },
     { key: 'cpc', label: 'CPC (VND)' },
     { key: 'cpm', label: 'CPM (VND)' },
-    { key: 'frequency', label: 'Tần suất (kỳ đồng bộ)' },
-    { label: 'Đánh giá AI', get: c => classifyCampaign(c, fatigueApplicable) }
+    { key: 'frequency', label: 'Tần suất (30 ngày gần nhất)' },
+    { label: 'Đánh giá AI', get: c => classifyCampaign(c) }
   ];
 }
 
@@ -93,7 +93,7 @@ export function saveReportFiles(raw, view, outputDir = DATA_DIR) {
 
   fs.writeFileSync(
     path.join(outputDir, 'campaigns.csv'),
-    CSV_BOM + convertToCsv(view.campaigns, campaignFields(view.fatigueApplicable !== false)),
+    CSV_BOM + convertToCsv(view.campaigns, campaignFields()),
     'utf-8'
   );
   fs.writeFileSync(

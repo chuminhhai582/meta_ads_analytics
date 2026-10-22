@@ -23,6 +23,9 @@ import { leadInRange, emptyFunnel, addLeadToFunnel, withFunnelRates } from './go
 // Giữ lại đường import cũ cho test và các module khác.
 export { getVietnamDateString };
 
+/** Phiên bản payload view gửi cho client. Khác SNAPSHOT_VERSION của kho dữ liệu. */
+export const VIEW_VERSION = 5;
+
 export const PLATFORM_LABELS = {
   facebook: 'Facebook',
   instagram: 'Instagram',
@@ -458,7 +461,17 @@ export function buildView(raw, options = {}) {
       const costs = leadCosts(spend, funnel);
 
       return {
-        ...c,
+        id: c.id,
+        name: c.name,
+        accountId: c.accountId,
+        accountName: c.accountName,
+        product: c.product,
+        productLabel: c.productLabel,
+        effective_status: c.effective_status,
+        expectedDailyBudget: c.expectedDailyBudget,
+        budgetType: c.budgetType,
+        frequency: c.frequency,
+        reach: c.reach,
         spend,
         messages,
         otherConversions: agg.otherConversions || 0,
@@ -470,12 +483,8 @@ export function buildView(raw, options = {}) {
         cpa: messages > 0 ? round(spend / messages) : 0,
         todaySpend: t.spend || 0,
         todayMessages: t.messages || 0,
-        // Platform breakdown
+        // Platform breakdown (giữ fbSpend làm khoá sort cho cột Nền tảng)
         fbSpend,
-        igSpend,
-        msgSpend,
-        audSpend,
-        otherSpend,
         platformBreakdown,
         // Lead & funnel metrics (measured, not allocated)
         l1Count: funnel.l1Count,
@@ -647,7 +656,7 @@ export function buildView(raw, options = {}) {
   }
 
   return {
-    schemaVersion: 5,
+    schemaVersion: VIEW_VERSION,
     fetchedAt: raw.fetchedAt,
     /** Preset thực sự đang dùng — 'custom' khi người dùng tự chọn khoảng ngày. */
     datePreset: effectivePreset,

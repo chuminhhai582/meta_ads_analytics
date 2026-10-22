@@ -4,7 +4,7 @@
 > Đọc file này TRƯỚC khi sửa bất kỳ dòng code nào. Quy tắc làm việc bắt buộc nằm ở
 > [`.agents/rules/quy-tac-du-an.md`](./.agents/rules/quy-tac-du-an.md).
 >
-> Cập nhật lần cuối: 2026-10-16
+> Cập nhật lần cuối: 2026-10-22
 
 ---
 
@@ -199,14 +199,15 @@ vượt quá hôm nay → cắt về hôm nay. Xem `normalizeCustomRange()`.
         "l1Count", "l2Count", "l3Count", "l4Count", "revenue", "cpl", "cpaL3", "cac", "roas" }
     ],
 
-    // ----- Bổ sung từ đợt rà soát 2026-10-16 (schemaVersion 4) -----
-    "schemaVersion": 4,
+    // ----- Bổ sung từ đợt rà soát 2026-10-16 & 2026-10-22 (VIEW_VERSION = 5) -----
+    "schemaVersion": 5,                // VIEW_VERSION = 5 (khác SNAPSHOT_VERSION = 4 của kho dữ liệu)
     "syncWindow": "last_30d",          // kỳ snapshot thật sự chứa dữ liệu
+    "frequencyWindow": "last_30d",     // cửa sổ đo tần suất cố định 30 ngày
     "dateRange": { "startDate", "endDate" },
     "tabBadges": {                     // THAY THẾ `productTabs` (trước nặng 436 KB)
       "ucmas": { "l1Count", "l3Count", "l4Count", "campaignCount", "activeCount" }, ...
     },
-    "fatigueApplicable": true,         // false khi kỳ đang xem ≠ syncWindow
+    "fatigueApplicable": true,         // luôn true (frequency tính theo cửa sổ 30 ngày cố định)
     "leadAttribution": { "matched", "unmatched", "adMapSize" },
     "unassignedLeads": { "totalLeads", "l1Count", "l2Count", "l3Count", "l4Count", "revenue" },
     "dataNotes": [ { "level": "info|warning", "message" } ],
@@ -236,7 +237,14 @@ vượt quá hôm nay → cắt về hôm nay. Xem `normalizeCustomRange()`.
 Đúng cho cả L2/L3/L4 và `revenue`, với mọi tổ hợp kỳ × sản phẩm × tài khoản.
 Chạy `npm test` trước khi commit bất kỳ thay đổi nào trong `src/report.js`.
 
-### Snapshot `data/latest_insights.json`
+### Phân biệt Snapshot Schema vs View Schema (Q-03)
+
+| Khái niệm | Hằng số | Phiên bản | File quản lý | Ý nghĩa |
+|---|---|---|---|---|
+| **Snapshot Schema** | `SNAPSHOT_VERSION` | **4** (hỗ trợ v2–v4) | `src/meta-api.js` | Định dạng file lưu trữ hạt lựu `data/latest_insights.json` (coverage, adMap, dailyRecords, placementRecords). |
+| **View Schema** | `VIEW_VERSION` | **5** | `src/report.js` | Định dạng payload API `/api/data` gửi về client sau khi `buildView()` tổng hợp. |
+
+### Lịch sử Snapshot `data/latest_insights.json`
 
 | Phiên bản | Khác biệt |
 |---|---|
@@ -278,19 +286,57 @@ mọi lead từ đầu — nên các trường được cập nhật trên lead 
 | CPA tốt / trung bình / cao | ≤ 65.000 ₫ / ≤ 90.000 ₫ / > 90.000 ₫ |
 | Win cần scale | ≥ 10 tin & CPA ≤ 65.000 ₫ (đang chạy) |
 | Cần rà soát (Money Waster) | Chi > 1,2tr & 0 tin, hoặc chi > 2tr & CPA > 130.000 ₫ (đang chạy) |
-| Fatigue | Frequency ≥ 3.0 (đang chạy) — **chỉ áp dụng khi kỳ đang xem = kỳ đồng bộ** |
+| Fatigue | Frequency ≥ 3.0 (đang chạy) — **tính theo cửa sổ cố định 30 ngày gần nhất** |
 | CTR thấp / cao | < 1,2% / ≥ 2,0% |
 
 > Ngưỡng là nguồn duy nhất tại `THRESHOLDS` trong `src/ai-analyst.js`, được gửi kèm
 > payload (`analysis.thresholds`) để frontend dùng chung — không viết lại trong `app.js`.
 
-> **Về Frequency:** Meta chỉ trả `frequency` cho đúng kỳ được truy vấn (reach đã loại
-> trùng nên không suy ra được cho kỳ ngắn hơn). Vì vậy `view.fatigueApplicable` = false
-> khi kỳ đang xem khác kỳ đồng bộ, và quy tắc fatigue bị bỏ qua thay vì dùng số của kỳ khác.
+> **Về Frequency (từ 2026-10-16 / Q-02):** Meta chỉ trả `frequency` chính xác cho kỳ được truy vấn
+> (reach loại trùng không thể cộng gộp theo ngày). Do bão hoà quảng cáo (Creative Fatigue) là hiện tượng
+> dài hạn, hệ thống đo tần suất trên cửa sổ **30 ngày gần nhất** (`last_30d`) và lưu trong snapshot.
+> Vì vậy `view.fatigueApplicable` luôn là `true`, và nhãn/tooltip trên giao diện & file CSV ghi rõ
+> "Tần suất (30 ngày gần nhất)" để người dùng không nhầm lẫn khi xem các kỳ ngắn (như "Hôm qua").
 
 ---
 
 ## 9. Vấn đề đã biết (Known Issues) — cập nhật khi sửa xong
+
+### Đợt rà soát 2026-10-22 — Đã hoàn thành 28/28 hạng mục (Đợt 1–4, 64/64 tests PASS ✅)
+
+Báo cáo chi tiết & hướng dẫn kỹ thuật: [`HUONG_DAN_FIX_2026-10-22.md`](./HUONG_DAN_FIX_2026-10-22.md)
+
+1. **Đợt 1 — Giao diện & Bảo mật (4/4 ✅)**:
+   - ✅ **U-01 + F-03**: Thêm lại `<div id="reportContent">`, sửa lỗi empty state "Không có chiến dịch nào".
+   - ✅ **U-02**: Bổ sung đầy đủ 7 biến CSS còn thiếu (`--text-subtle`, `--text-on-accent`, `--bg-accent-dim`, `--radius-xs`, `--radius-lg`, `--shadow-md`, `--shadow-xl`).
+   - ✅ **F-01**: Đồng bộ tham số bộ lọc (`?datePreset=&product=&accountId=`) vào 3 liên kết xuất file (CSV chiến dịch, CSV ngày, JSON).
+   - ✅ **S-01**: Chặn CSRF theo phương thức cho `/api/cp/*` (`POST/PUT/DELETE` bắt buộc `X-Internal-Token`, `GET` mở tự do cho đọc cache).
+2. **Đợt 2 — Hiệu suất payload (3/3 ✅)**:
+   - ✅ **P-01**: Lọc 561 chiến dịch rỗng khỏi payload view (giảm 89% dung lượng từ 389.7 KB xuống ~42 KB), bảo toàn 100% bất biến $\sum(\text{dòng}) + \text{unassignedLeads} = \text{summary}$.
+   - ✅ **P-02**: Nén gzip bằng thư viện native `zlib` (tiết kiệm thêm 94% băng thông mạng, không thêm external dependency).
+   - ✅ **F-02**: Tỉa danh sách chiến dịch trong dropdown/autocomplete của module nhân bản theo đúng view hiện tại.
+3. **Đợt 3 — Độ tin cậy & Tiêu chuẩn UX (6/6 ✅)**:
+   - ✅ **Q-01**: Bộ test tự động toàn diện cho `cross-post.js` và các route xuất file (`test/cross-post.test.js`, `test/export-routes.test.js`).
+   - ✅ **F-05**: Bổ sung cờ chống bấm trùng (`isSubmitting`) cho cả Cross-Post và Ads Creation Studio.
+   - ✅ **P-03**: Debounce ô tìm kiếm bảng (150ms) giúp thao tác lọc mượt mà, không giật lag.
+   - ✅ **P-04**: Cập nhật biểu đồ tại chỗ (`chart.update()`) thay vì huỷ tạo lại từ đầu (`chart.destroy()`).
+   - ✅ **U-04**: Hỗ trợ sắp xếp bảng bằng bàn phím (Enter/Space) kèm thuộc tính trợ năng `aria-sort`.
+   - ✅ **U-05**: Khép kín focus (`trapFocus`) và hỗ trợ phím `Esc` đóng modal, hoàn trả focus chuẩn WAI-ARIA.
+4. **Đợt 4 — Hoàn thiện kiến trúc & Clean-up (14/14 ✅)**:
+   - ✅ **U-03**: Thêm thanh bật/tắt nhóm cột bảng (`Chỉ số Meta`, `Tuyển sinh CRM`, `Nền tảng`) lưu trạng thái qua `localStorage`.
+   - ✅ **F-04**: Chuyển quy trình nhân bản hàng loạt sang Job model (`jobId`, polling 1.5s, `renderPartialResults`) chống timeout HTTP.
+   - ✅ **Q-02**: Dọn dẹp `fatigueApplicable` (mặc định luôn true), chuẩn hoá nhãn "Tần suất (30 ngày gần nhất)", tooltip động.
+   - ✅ **Q-03**: Tách biệt rõ ràng 2 khái niệm phiên bản: `SNAPSHOT_VERSION = 4` (kho dữ liệu) vs `VIEW_VERSION = 5` (payload API).
+   - ✅ **P-05**: Bỏ đọc lại JSON từ ổ đĩa trong `analyze-campaigns`, chia sẻ `rawReport` qua `setRawReportProvider`.
+   - ✅ **P-06**: Ghi compact JSON cho `leads_cache.json` (giảm 31% kích thước file).
+   - ✅ **P-07**: Thêm tài liệu giải thích giới hạn `VIEW_CACHE_MAX = 32`.
+   - ✅ **F-06**: Gộp hai route trùng lặp `/api/cp/ad-accounts`, tự động kéo từ Meta nếu cache rỗng.
+   - ✅ **S-02**: Ghim phiên bản `lucide@0.460.0`, thêm `defer`, cấp cache headers `immutable` cho static assets.
+   - ✅ **U-06**: Nâng tỷ lệ tương phản `--text-muted` lên #7c8ba3 (AA 5.8:1), tăng kích thước font chữ cho các chỉ số phụ.
+   - ✅ **U-07**: Bổ sung `@media (prefers-reduced-motion: reduce)` và `@media print` hỗ trợ in ấn báo cáo rõ nét.
+   - ✅ **U-08**: Thống nhất `max-width: 1480px`, tái sử dụng class CSS trong modal nhân bản, bổ sung quy ước hạn chế style inline.
+   - ✅ **Q-04**: Loại bỏ các trường payload không ai dùng (`objective`, `status`, `igSpend`, `msgSpend`, `audSpend`, `otherSpend`).
+   - ✅ **Q-05**: Gắn thẻ Git `snapshot/*` cho các mốc lịch sử, xoá bỏ triệt để thư mục `.backups/`.
 
 ### Đợt rà soát 2026-10-16 — đã sửa toàn bộ 31 phát hiện (đã duyệt)
 
@@ -329,42 +375,43 @@ Báo cáo đầy đủ kèm số đo kiểm chứng: [`BAO_CAO_RA_SOAT_2026-10-1
 **Nhóm E — chất lượng code (9/9 ✅)**
 23. ✅ E-01 ngưỡng CPA gửi qua payload, frontend không hardcode. 24. ✅ E-02 BM ID / Sheet URL / phiên bản API đọc từ `.env` + `/api/session`. 25. ✅ E-03 `summarizeLeads` có default param. 26. ✅ E-04 xoá import chết, dùng chung `ROOT_DIR`. 27. ✅ E-05 export dùng lại `convertToCsv()` (kèm chống CSV formula injection). 28. ✅ E-06 xoá hàm `selectProduct()` không dùng. 29. ✅ E-07 gộp 3 thư mục backup vào `.backups/`. 30. ✅ E-08 **29 test tự động** (`npm test`) khoá lại toàn bộ nhóm A. 31. ✅ E-09 tài liệu cập nhật bằng số đo thật.
 
-332: > ℹ️ **Trạng thái Access Token**: Hệ thống sử dụng System User Token vĩnh viễn (Never Expires)
-333: > với 43 quyền đầy đủ bao gồm `ads_management`, `pages_manage_posts`, `pages_read_engagement`, `business_management`.
-334: 
-335: ### Đợt rà soát 2026-10-15 (lịch sử)
-336: 
-337: > Đã hoàn tất rà soát & tối ưu ngày 2026-10-15:
-338: 1. ✅ **Phân trang (pagination) Graph API**: Đã thêm `callGraphApiAll()` duyệt toàn bộ `paging.next` cho `campaigns`, `adsets`, `insights`. Số chiến dịch quét tăng từ 479 lên 618 (TK 1: 224 chiến dịch, TK 6: 115 chiến dịch).
-339: 2. ✅ **Xoá bỏ hoàn toàn dữ liệu giả lập**: Gỡ bỏ các tỷ lệ phễu giả, placement cố định, và frequency 2.3. Thay bằng dữ liệu thật: breakdown `publisher_platform`, phễu 3 tầng thực tế (Hiển thị → Click → Tin nhắn), và frequency thật.
-340: 3. ✅ **Sửa cấu trúc HTML header**: Đã thêm thẻ `<div class="header-right">`, giao diện co giãn chuẩn.
-341: 4. ✅ **Bảo vệ an toàn file `.env`**: Thay thế bằng hàm `updateEnvFile()` chỉ cập nhật đúng key được gửi lên, không xoá biến khác.
-342: 5. ✅ **Sửa đường dẫn tài liệu Token**: Link footer trỏ tới `/docs/huong-dan-token` tải file trực tiếp, không bị 404.
-343: 6. ✅ **Tối ưu Payload & Tốc độ**: Tách `fetchRawReport` và `buildView` tại server. Bỏ trùng lặp `allCampaigns`, JSON nén gọn, đồng bộ 10 tài khoản chỉ mất ~9.6 giây.
-344: 7. ✅ **Lọc trạng thái chuẩn xác**: Toàn bộ hệ thống (`ai-analyst.js`, `app.js`, `meta-api.js`) dùng đồng nhất `effective_status === 'ACTIVE'`.
-345: 8. ✅ **Bỏ hardcode tài khoản & BM ID**: Đọc động từ `config.businessId` và `bmAccounts.length`.
-346: 9. ✅ **Nâng cấp Kiến trúc Local Data Lake (Offline-First)**: Lưu trữ dữ liệu hạt lựu `dailyRecords` và `placementRecords` theo từng ngày của toàn bộ 10 tài khoản. Thao tác đổi tài khoản, đổi khoảng thời gian (Hôm nay, Hôm qua, 7 ngày, 14 ngày, 30 ngày, Tháng này) và đổi 4 sản phẩm chạy 100% Local trong < 2ms, không gọi Meta API. Chỉ gọi Graph API duy nhất khi bấm nút "Đồng bộ Meta Ads".
-347: 10. ✅ **Tích hợp Google Sheet CRM & Phễu Tuyển Sinh L1-L4 & 5 Tab Sản Phẩm**: Tự động kéo 1.137 lead từ Google Sheet qua link CSV xuất bản web khi bấm Đồng bộ. Phân rã tiến trình tuyển sinh L1 (SĐT), L2 (tiếp cận), L3 (hẹn test), L4 (nhập học chốt), doanh thu học phí thực tế. Tách giao diện thành 5 Tab điều hướng độc lập: Tổng quan (Toàn BM), UCMAS, UCKID, MATHCA, TRẠI HÈ.
-348: 11. ✅ **Mở rộng bảng chiến dịch với SĐT (L1), L3, L4, Doanh thu & Chi tiêu theo nền tảng**: Bổ sung trực quan 5 cột mới vào bảng danh sách chiến dịch (`SĐT (L1)`, `Hẹn test (L3)`, `Nhập học (L4)`, `Doanh thu`, `Nền tảng FB/IG/Khác`). Cho phép lọc và click tiêu đề để sort trực tiếp theo từng chỉ số tuyển sinh và doanh thu.
-349: 
-350: ---
-351: 
-352: ## 10. Lịch sử thay đổi quan trọng
-353: 
-354: | Ngày | Thay đổi |
-355: |---|---|
-356: | 2026-10-15 | Kết nối Meta API với token user "Minh Hải", App `1512128683054595` |
-357: | 2026-10-15 | Giới hạn phạm vi BM `2590933284556026` (10 tài khoản) |
-358: | 2026-10-15 | Phân loại sản phẩm theo quy tắc `/…/`; chốt chỉ 4 SP: UCMAS, UCKID, MATHCA, TRẠI HÈ |
-359: | 2026-10-15 | Thêm Ngân sách dự kiến hôm nay (CBO + ABO, lọc `effective_status`) vào KPI, thẻ SP, bảng |
-360: | 2026-10-15 | Tạo `PROJECT_CONTEXT.md` và `.agents/rules/quy-tac-du-an.md` |
-361: | 2026-10-15 | **Tối ưu toàn diện hệ thống (Đã duyệt)**: Phân trang API (quét đủ 618 CĐ), xoá demo/fake data, thay thế KPI e-commerce bằng tin nhắn/pacing thực tế, đồng nhất UI/UX Dark Glassmorphism, chuẩn hoá schema v2. |
-362: | 2026-10-15 | **Nâng cấp Local Data Lake (Offline-First - Đã duyệt)**: Tách triệt để lớp lưu trữ hạt lựu (`dailyRecords`, `placementRecords`) và lớp biểu diễn (`buildView`). Chuyển toàn bộ lọc tài khoản / ngày / sản phẩm sang xử lý local tức thì (< 2ms), chống Rate Limit Meta, trải nghiệm mượt mà tuyệt đối. |
-363: | 2026-10-15 | **Tích hợp Google Sheet & 5 Tab Chuyên Sâu (Đã duyệt)**: Xây dựng module `src/google-sheet.js`, đo lường phễu tuyển sinh 6 tầng L1-L4, ghi nhận doanh thu học phí & CAC thực tế, chia 5 tab chuyên sâu cho từng sản phẩm. |
-364: | 2026-10-16 | **Kho dữ liệu cả năm 2026 + đồng bộ gia tăng (Đã duyệt)**: snapshot v4 với coverage; lần đầu kéo 6.471 dòng/55,9s, các lần sau ~10s; chia request theo tháng (nhanh hơn 1,7x); placements có chiều thời gian; thêm các kỳ 90 ngày / tháng trước / quý này / cả năm; frequency chuyển sang cửa sổ cố định 30 ngày. |
-365: | 2026-10-16 | **Rà soát toàn hệ thống & sửa 31 phát hiện (Đã duyệt)**: ghép lead đúng qua `adMap` (schema v3), bỏ chia lead theo tỉ lệ chi tiêu, lọc lead theo kỳ & tài khoản, khoá bất biến Σdòng = tổng KPI bằng 29 test; chặn CORS `*` + chỉ cho loopback + token CSRF; ngừng gửi SĐT thật về client; sửa 3 link export hỏng; payload 883→428 KB, `buildView` 17,4→1,40 ms. |
-366: | 2026-10-15 | **Bổ sung cột SĐT (L1), L3, L4, Doanh thu và Chi tiêu nền tảng vào danh sách chiến dịch**: Tích hợp dữ liệu phễu tuyển sinh và phân rã chi tiêu Facebook, Instagram, Messenger, Audience Network chi tiết cho từng hàng chiến dịch kèm chức năng sắp xếp linh hoạt. |
-367: | 2026-10-20 | **Tính năng Cross-Post & Creative Replication (Đã duyệt)**: Tách biệt hoàn toàn dưới route `/cross-post` và API `/api/cp/*`. Hỗ trợ: (1) Quản lý sao chép bài đăng từ 1 Fanpage và đăng đồng loạt sang nhiều Fanpage khác có điều chỉnh nội dung, kèm xem trước và giãn cách 1.5s bảo vệ API; (2) Quản lý nhân bản quảng cáo (Ad Copy) sang các nhóm quảng cáo khác với trạng thái mặc định PAUSED tuyệt đối an toàn. Bảo vệ CSRF qua `X-Internal-Token`. |\n| 2026-10-20 | **Nhân bản chiến dịch từ Dashboard + Disk Cache**: (1) Checkbox chọn chiến dịch trên bảng Dashboard, floating toolbar, wizard 4 bước (Phân tích Ads, Chọn Fanpage đích, Cấu hình ngân sách, Thực thi). Tự động phân loại Page Post vs Direct Ad. (2) Cache Fanpage và Ad Accounts xuống data/cp_pages_cache.json và cp_accounts_cache.json — nạp từ disk khi server start, nút Làm mới khi phân quyền thêm. (3) Fix analyze-campaigns: truy vấn ads qua ad account + filtering. Chống spam: max 10 items/batch, 2.5s delay, PAUSED mặc định. |\n
+> ℹ️ **Trạng thái Access Token**: Hệ thống sử dụng System User Token vĩnh viễn (Never Expires)
+> với 43 quyền đầy đủ bao gồm `ads_management`, `pages_manage_posts`, `pages_read_engagement`, `business_management`.
+
+### Đợt rà soát 2026-10-15 (lịch sử)
+
+> Đã hoàn tất rà soát & tối ưu ngày 2026-10-15:
+1. ✅ **Phân trang (pagination) Graph API**: Đã thêm `callGraphApiAll()` duyệt toàn bộ `paging.next` cho `campaigns`, `adsets`, `insights`. Số chiến dịch quét tăng từ 479 lên 618 (TK 1: 224 chiến dịch, TK 6: 115 chiến dịch).
+2. ✅ **Xoá bỏ hoàn toàn dữ liệu giả lập**: Gỡ bỏ các tỷ lệ phễu giả, placement cố định, và frequency 2.3. Thay bằng dữ liệu thật: breakdown `publisher_platform`, phễu 3 tầng thực tế (Hiển thị → Click → Tin nhắn), và frequency thật.
+3. ✅ **Sửa cấu trúc HTML header**: Đã thêm thẻ `<div class="header-right">`, giao diện co giãn chuẩn.
+4. ✅ **Bảo vệ an toàn file `.env`**: Thay thế bằng hàm `updateEnvFile()` chỉ cập nhật đúng key được gửi lên, không xoá biến khác.
+5. ✅ **Sửa đường dẫn tài liệu Token**: Link footer trỏ tới `/docs/huong-dan-token` tải file trực tiếp, không bị 404.
+6. ✅ **Tối ưu Payload & Tốc độ**: Tách `fetchRawReport` và `buildView` tại server. Bỏ trùng lặp `allCampaigns`, JSON nén gọn, đồng bộ 10 tài khoản chỉ mất ~9.6 giây.
+7. ✅ **Lọc trạng thái chuẩn xác**: Toàn bộ hệ thống (`ai-analyst.js`, `app.js`, `meta-api.js`) dùng đồng nhất `effective_status === 'ACTIVE'`.
+8. ✅ **Bỏ hardcode tài khoản & BM ID**: Đọc động từ `config.businessId` và `bmAccounts.length`.
+9. ✅ **Nâng cấp Kiến trúc Local Data Lake (Offline-First)**: Lưu trữ dữ liệu hạt lựu `dailyRecords` và `placementRecords` theo từng ngày của toàn bộ 10 tài khoản. Thao tác đổi tài khoản, đổi khoảng thời gian (Hôm nay, Hôm qua, 7 ngày, 14 ngày, 30 ngày, Tháng này) và đổi 4 sản phẩm chạy 100% Local trong < 2ms, không gọi Meta API. Chỉ gọi Graph API duy nhất khi bấm nút "Đồng bộ Meta Ads".
+10. ✅ **Tích hợp Google Sheet CRM & Phễu Tuyển Sinh L1-L4 & 5 Tab Sản Phẩm**: Tự động kéo 1.137 lead từ Google Sheet qua link CSV xuất bản web khi bấm Đồng bộ. Phân rã tiến trình tuyển sinh L1 (SĐT), L2 (tiếp cận), L3 (hẹn test), L4 (nhập học chốt), doanh thu học phí thực tế. Tách giao diện thành 5 Tab điều hướng độc lập: Tổng quan (Toàn BM), UCMAS, UCKID, MATHCA, TRẠI HÈ.
+11. ✅ **Mở rộng bảng chiến dịch với SĐT (L1), L3, L4, Doanh thu & Chi tiêu theo nền tảng**: Bổ sung trực quan 5 cột mới vào bảng danh sách chiến dịch (`SĐT (L1)`, `Hẹn test (L3)`, `Nhập học (L4)`, `Doanh thu`, `Nền tảng FB/IG/Khác`). Cho phép lọc và click tiêu đề để sort trực tiếp theo từng chỉ số tuyển sinh và doanh thu.
+---
+
+## 10. Lịch sử thay đổi quan trọng
+
+| Ngày | Thay đổi |
+|---|---|
+| 2026-10-15 | Kết nối Meta API với token user "Minh Hải", App `1512128683054595` |
+| 2026-10-15 | Giới hạn phạm vi BM `2590933284556026` (10 tài khoản) |
+| 2026-10-15 | Phân loại sản phẩm theo quy tắc `/…/`; chốt chỉ 4 SP: UCMAS, UCKID, MATHCA, TRẠI HÈ |
+| 2026-10-15 | Thêm Ngân sách dự kiến hôm nay (CBO + ABO, lọc `effective_status`) vào KPI, thẻ SP, bảng |
+| 2026-10-15 | Tạo `PROJECT_CONTEXT.md` và `.agents/rules/quy-tac-du-an.md` |
+| 2026-10-15 | **Tối ưu toàn diện hệ thống (Đã duyệt)**: Phân trang API (quét đủ 618 CĐ), xoá demo/fake data, thay thế KPI e-commerce bằng tin nhắn/pacing thực tế, đồng nhất UI/UX Dark Glassmorphism, chuẩn hoá schema v2. |
+| 2026-10-15 | **Nâng cấp Local Data Lake (Offline-First - Đã duyệt)**: Tách triệt để lớp lưu trữ hạt lựu (`dailyRecords`, `placementRecords`) và lớp biểu diễn (`buildView`). Chuyển toàn bộ lọc tài khoản / ngày / sản phẩm sang xử lý local tức thì (< 2ms), chống Rate Limit Meta, trải nghiệm mượt mà tuyệt đối. |
+| 2026-10-15 | **Tích hợp Google Sheet & 5 Tab Chuyên Sâu (Đã duyệt)**: Xây dựng module `src/google-sheet.js`, đo lường phễu tuyển sinh 6 tầng L1-L4, ghi nhận doanh thu học phí & CAC thực tế, chia 5 tab chuyên sâu cho từng sản phẩm. |
+| 2026-10-15 | **Bổ sung cột SĐT (L1), L3, L4, Doanh thu và Chi tiêu nền tảng vào danh sách chiến dịch**: Tích hợp dữ liệu phễu tuyển sinh và phân rã chi tiêu Facebook, Instagram, Messenger, Audience Network chi tiết cho từng hàng chiến dịch kèm chức năng sắp xếp linh hoạt. |
+| 2026-10-16 | **Kho dữ liệu cả năm 2026 + đồng bộ gia tăng (Đã duyệt)**: snapshot v4 với coverage; lần đầu kéo 6.471 dòng/55,9s, các lần sau ~10s; chia request theo tháng (nhanh hơn 1,7x); placements có chiều thời gian; thêm các kỳ 90 ngày / tháng trước / quý này / cả năm; frequency chuyển sang cửa sổ cố định 30 ngày. |
+| 2026-10-16 | **Rà soát toàn hệ thống & sửa 31 phát hiện (Đã duyệt)**: ghép lead đúng qua `adMap` (schema v3), bỏ chia lead theo tỉ lệ chi tiêu, lọc lead theo kỳ & tài khoản, khoá bất biến Σdòng = tổng KPI bằng 29 test; chặn CORS `*` + chỉ cho loopback + token CSRF; ngừng gửi SĐT thật về client; sửa 3 link export hỏng; payload 883→428 KB, `buildView` 17,4→1,40 ms. |
+| 2026-10-20 | **Tính năng Cross-Post & Creative Replication (Đã duyệt)**: Tách biệt hoàn toàn dưới route `/cross-post` và API `/api/cp/*`. Hỗ trợ: (1) Quản lý sao chép bài đăng từ 1 Fanpage và đăng đồng loạt sang nhiều Fanpage khác có điều chỉnh nội dung, kèm xem trước và giãn cách 1.5s bảo vệ API; (2) Quản lý nhân bản quảng cáo (Ad Copy) sang các nhóm quảng cáo khác với trạng thái mặc định PAUSED tuyệt đối an toàn. Bảo vệ CSRF qua `X-Internal-Token`. |
+| 2026-10-20 | **Nhân bản chiến dịch từ Dashboard + Disk Cache**: (1) Checkbox chọn chiến dịch trên bảng Dashboard, floating toolbar, wizard 4 bước (Phân tích Ads, Chọn Fanpage đích, Cấu hình ngân sách, Thực thi). Tự động phân loại Page Post vs Direct Ad. (2) Cache Fanpage và Ad Accounts xuống data/cp_pages_cache.json và cp_accounts_cache.json — nạp từ disk khi server start, nút Làm mới khi phân quyền thêm. (3) Fix analyze-campaigns: truy vấn ads qua ad account + filtering. Chống spam: max 10 items/batch, 2.5s delay, PAUSED mặc định. |
 | 2026-10-20 | **Nhân bản Targeting + Custom Audiences**: analyze-campaigns giờ trả về adset targeting đầy đủ (age, geo, custom_audiences, excluded_custom_audiences, publisher_platforms, bid_strategy, promoted_object). bulk-replicate Direct Ad giờ tạo Campaign → Adset (clone targeting) → Ad trên account đích thay vì chỉ copy ad. UI hiển thị targeting trên mỗi ad card (bước 1) và tóm tắt targeting sẽ được clone (bước 3). Tệp đối tượng Custom/Lookalike Audience tự động sử dụng được nếu đã chia sẻ quyền từ BM. |
 | 2026-10-21 | **Tối ưu toàn diện UI/UX (Đã duyệt)**: (1) Sửa triệt để lỗi rớt dòng nút Export trên Header Dashboard, gom nhóm tiện ích Sheet/Token/Export thành toolbar gọn gàng; (2) Thêm Sticky Column cho 2 cột Checkbox + Tên chiến dịch khi cuộn ngang bảng giúp không bị mất dấu; (3) Thêm nút Thu gọn/Mở rộng cho khối Khuyến nghị AI giúp đưa bảng số liệu lên gần tầm mắt; (4) Căn chỉnh Header trang Cross-Post Manager thẳng hàng phẳng phiu, cân đối 2 bên; (5) Bổ sung Dark Custom Scrollbar thanh mảnh, tinh tế cho toàn bộ modal và bảng. |
 | 2026-10-21 | **Nâng cấp Ads Creation Studio 4 bước (Đã duyệt)**: (1) Bổ sung quy trình tạo chiến dịch, tạo nhóm quảng cáo kèm targeting (tuổi, giới tính, khu vực địa lý, placements) và tạo hàng loạt quảng cáo; (2) Hỗ trợ 3 cách chuẩn bị nội dung: Multi-post Fanpage, Nhập danh sách nội dung (Custom Cards), và Nhân bản Ads mẫu; (3) Xem trước Ma trận quảng cáo động (Matrix Preview); (4) Khắc phục triệt để lỗi Standard Enhancements / copies deprecated của Meta bằng cách khởi tạo trực tiếp Creative sạch qua `POST act_{id}/adcreatives` và `POST act_{id}/ads`; (5) Giữ an toàn tuyệt đối với trạng thái PAUSED mặc định và giãn cách 1.5s - 2s chống spam API. |
+| 2026-10-22 | **Rà soát & tối ưu toàn diện 28 hạng mục (Đợt 1–4, 64/64 tests PASS - Đã duyệt)**: (1) Sửa layout footer, định nghĩa 7 biến CSS thiếu, liên kết export theo bộ lọc, chặn CSRF cho API ghi; (2) Lọc chiến dịch rỗng khỏi payload (−89%), nén gzip bằng zlib native (−94%), bảo toàn 100% bất biến KPI; (3) Bổ sung 15 automated tests (tổng 64 tests), chốt cờ debounce & chốt chống chạy trùng, cập nhật Chart tại chỗ, a11y bàn phím & modal; (4) Bật/tắt nhóm cột bảng, Job model nhân bản hàng loạt chống timeout, chuẩn hoá snapshot v4 vs view v5, đọc RAM trực tiếp, compact cache, ghim CDN + static cache headers, nâng tương phản WCAG AA, prefers-reduced-motion + print style. |

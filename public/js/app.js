@@ -363,6 +363,17 @@ function initEventListeners() {
     });
   }
 
+  // Bật / tắt nhóm cột trong bảng (U-03)
+  document.querySelectorAll('[data-colgroup]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const g = btn.dataset.colgroup;
+      const off = hiddenColGroups();
+      const next = off.includes(g) ? off.filter(x => x !== g) : [...off, g];
+      localStorage.setItem('hiddenColGroups', JSON.stringify(next));
+      applyColGroups();
+    });
+  });
+
   // Export dropdown
   const exportDropdown = document.getElementById('exportDropdown');
   const exportDropdownBtn = document.getElementById('exportDropdownBtn');
@@ -1463,6 +1474,26 @@ function renderPlatformTags(c) {
   `;
 }
 
+/**
+ * 17 cột cần 1.931 px nhưng khung chỉ có 1.152 px. Cho người dùng chọn nhóm cột
+ * cần xem; nhớ lựa chọn giữa các phiên để không phải bật lại mỗi lần mở.
+ */
+const COL_GROUPS = ['meta', 'funnel', 'platform'];
+
+function hiddenColGroups() {
+  try { return JSON.parse(localStorage.getItem('hiddenColGroups') || '["platform"]'); }
+  catch { return ['platform']; }
+}
+
+function applyColGroups() {
+  const off = hiddenColGroups();
+  const table = document.getElementById('campaignsDataTable');
+  if (!table) return;
+  COL_GROUPS.forEach(g => table.classList.toggle(`hide-${g}`, off.includes(g)));
+  document.querySelectorAll('[data-colgroup]').forEach(b =>
+    b.classList.toggle('active', !off.includes(b.dataset.colgroup)));
+}
+
 function renderTable() {
   const tbody = document.getElementById('campaignsTableBody');
   const countBadge = document.getElementById('campaignCountBadge');
@@ -1518,8 +1549,9 @@ function renderTable() {
   }
 
   if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="17" class="table-empty">Không tìm thấy chiến dịch nào phù hợp với bộ lọc hiện tại</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="99" class="table-empty">Không tìm thấy chiến dịch nào phù hợp với bộ lọc hiện tại</td></tr>`;
     updateSelectionToolbar();
+    applyColGroups();
     return;
   }
 
@@ -1529,10 +1561,14 @@ function renderTable() {
     const isWaster = c.recommendation === 'cut_or_review';
     const isFatigue = c.recommendation === 'fatigue_alert';
 
+    const fatigueHint = appState.view?.frequencyWindow === 'last_30d'
+      ? 'Tần suất 30 ngày gần nhất — không phụ thuộc kỳ đang xem'
+      : `Tần suất kỳ ${appState.view?.frequencyWindow || '30 ngày'}`;
+
     let tagHtml = `<span class="pill tone-neutral">Duy trì</span>`;
     if (isWin) tagHtml = `<span class="pill tone-success">🔥 Scale</span>`;
     else if (isWaster) tagHtml = `<span class="pill tone-danger">🛑 Rà soát</span>`;
-    else if (isFatigue) tagHtml = `<span class="pill tone-warning">⚠️ Fatigue</span>`;
+    else if (isFatigue) tagHtml = `<span class="pill tone-warning" title="${esc(fatigueHint)}">⚠️ Fatigue</span>`;
 
     const statusPillClass = c.effective_status === 'ACTIVE' ? 'tone-success' : 'tone-neutral';
     const statusLabel = STATUS_TEXT[c.effective_status] || c.effective_status;
@@ -1576,37 +1612,37 @@ function renderTable() {
         <td>
           <span class="pill ${statusPillClass}">${esc(statusLabel)}</span>
         </td>
-        <td class="num text-success">
+        <td class="num text-success" data-col="meta">
           ${c.expectedDailyBudget > 0 ? formatCurrency(c.expectedDailyBudget) : '<span class="text-muted">–</span>'}
         </td>
-        <td class="num">
+        <td class="num" data-col="meta">
           ${c.todaySpend > 0 ? formatCurrency(c.todaySpend) : '<span class="text-muted">–</span>'}
         </td>
-        <td class="num">
+        <td class="num" data-col="meta">
           ${formatCurrency(c.spend)}
         </td>
-        <td class="num text-primary">
+        <td class="num text-primary" data-col="meta">
           ${formatNumber(c.messages)}
         </td>
-        <td class="num ${cpaClass}">
+        <td class="num ${cpaClass}" data-col="meta">
           ${c.messages > 0 ? formatCurrency(c.cpa) : '<span class="text-muted">–</span>'}
         </td>
-        <td class="num">
+        <td class="num" data-col="funnel">
           ${l1Html}
         </td>
-        <td class="num">
+        <td class="num" data-col="funnel">
           ${l3Html}
         </td>
-        <td class="num">
+        <td class="num" data-col="funnel">
           ${l4Html}
         </td>
-        <td class="num">
+        <td class="num" data-col="funnel">
           ${revHtml}
         </td>
-        <td>
+        <td data-col="platform">
           ${platformHtml}
         </td>
-        <td class="num">
+        <td class="num" data-col="meta">
           ${(c.ctr || 0).toFixed(2)}%
         </td>
         <td class="text-center">
@@ -1619,6 +1655,7 @@ function renderTable() {
   html += renderUnassignedRow();
   tbody.innerHTML = html;
   updateSelectionToolbar();
+  applyColGroups();
 }
 
 /**
@@ -1640,17 +1677,17 @@ function renderUnassignedRow() {
       <td><span class="product-badge prod-khac">—</span></td>
       <td><span class="account-tag">—</span></td>
       <td><span class="pill tone-neutral">Không rõ CĐ</span></td>
-      <td class="num"><span class="text-muted">–</span></td>
-      <td class="num"><span class="text-muted">–</span></td>
-      <td class="num"><span class="text-muted">–</span></td>
-      <td class="num"><span class="text-muted">–</span></td>
-      <td class="num"><span class="text-muted">–</span></td>
-      <td class="num"><span class="camp-l1-val">${formatNumber(u.l1Count)}</span></td>
-      <td class="num"><span class="camp-l3-val">${formatNumber(u.l3Count)}</span></td>
-      <td class="num"><span class="camp-l4-val">${formatNumber(u.l4Count)}</span></td>
-      <td class="num"><span class="camp-rev-val">${u.revenue > 0 ? formatCurrency(u.revenue) : '–'}</span></td>
-      <td><span class="text-muted">–</span></td>
-      <td class="num"><span class="text-muted">–</span></td>
+      <td class="num" data-col="meta"><span class="text-muted">–</span></td>
+      <td class="num" data-col="meta"><span class="text-muted">–</span></td>
+      <td class="num" data-col="meta"><span class="text-muted">–</span></td>
+      <td class="num" data-col="meta"><span class="text-muted">–</span></td>
+      <td class="num" data-col="meta"><span class="text-muted">–</span></td>
+      <td class="num" data-col="funnel"><span class="camp-l1-val">${formatNumber(u.l1Count)}</span></td>
+      <td class="num" data-col="funnel"><span class="camp-l3-val">${formatNumber(u.l3Count)}</span></td>
+      <td class="num" data-col="funnel"><span class="camp-l4-val">${formatNumber(u.l4Count)}</span></td>
+      <td class="num" data-col="funnel"><span class="camp-rev-val">${u.revenue > 0 ? formatCurrency(u.revenue) : '–'}</span></td>
+      <td data-col="platform"><span class="text-muted">–</span></td>
+      <td class="num" data-col="meta"><span class="text-muted">–</span></td>
       <td class="text-center"><span class="pill tone-neutral">Cần map Ad ID</span></td>
     </tr>
   `;

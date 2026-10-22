@@ -22,14 +22,12 @@ export const THRESHOLDS = {
 const vnd = (n) => `${Math.round(n || 0).toLocaleString('vi-VN')} ₫`;
 
 /**
+/**
  * Classify a single campaign. Single source of truth for the "Đánh giá AI" column
  * and the recommendation cards. Priority: scale > cut_or_review > fatigue_alert > maintain.
  *
  * @param {object} c campaign row from buildView
- * @param {boolean} fatigueApplicable Meta only reports `frequency` for the sync window
- *   (reach is de-duplicated, so it cannot be re-derived for a shorter range). When the
- *   view shows a different range we skip the fatigue rule instead of judging it with a
- *   number that belongs to another period — see quy-tac-du-an.md §4.
+ * @param {boolean} [fatigueApplicable=true] mặc định luôn true từ 21/10/2026 vì frequency luôn đo trên 30 ngày
  */
 export function classifyCampaign(c, fatigueApplicable = true) {
   if (c.effective_status !== 'ACTIVE') return 'maintain';
@@ -101,10 +99,9 @@ export function generateAnalysis(view) {
     }
   }
 
-  // 4. Classify each campaign
-  const fatigueApplicable = view.fatigueApplicable !== false;
+  // 4. Classify each campaign (tần suất luôn là 30 ngày gần nhất)
   for (const c of campaigns) {
-    c.recommendation = classifyCampaign(c, fatigueApplicable);
+    c.recommendation = classifyCampaign(c);
     const base = { id: c.id, name: c.name, product: c.productLabel, accountName: c.accountName,
       spend: c.spend, cpa: c.cpa, messages: c.messages, frequency: c.frequency };
 
@@ -128,16 +125,14 @@ export function generateAnalysis(view) {
   if (healthScore < 60) { statusLabel = 'Cần tối ưu khẩn cấp'; statusLevel = 'bad'; }
   else if (healthScore < 80) { statusLabel = 'Hoạt động trung bình'; statusLevel = 'warn'; }
 
-  const fatiguePart = fatigueApplicable
-    ? `${fatigueAlerts.length} chiến dịch có dấu hiệu bão hòa`
-    : 'chưa đánh giá bão hòa (tần suất chỉ đo được cho kỳ đồng bộ)';
+  const fatiguePart = `${fatigueAlerts.length} chiến dịch có dấu hiệu bão hòa`;
 
   return {
     healthScore,
     statusLabel,
     statusLevel,
     thresholds: THRESHOLDS,
-    fatigueApplicable,
+    fatigueApplicable: true,
     recommendations,
     topPerformers,
     moneyWasters,
