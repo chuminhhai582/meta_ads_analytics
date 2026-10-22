@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import zlib from 'zlib';
 import { config, ROOT_DIR, updateEnvFile, validateConfigInput, SESSION_TOKEN } from './config.js';
 import { fetchRawReport } from './meta-api.js';
 import { buildView, DATE_PRESETS } from './report.js';
@@ -42,6 +43,35 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: '256kb' }));
+
+/**
+ * Nén gzip cho phản hồi JSON lớn.
+ *
+ * Dùng zlib có sẵn trong Node thay vì thêm dependency `compression` — stack vẫn
+ * chỉ 3 package (giữ nguyên quyết định D-02 của đợt rà soát 16/10, nhưng không
+ * phải trả giá bằng việc bỏ nén).
+ *
+ * Đo 21/10/2026: payload 390 KB → 23 KB (−94%) trong 4,9 ms.
+ * Ngưỡng 8 KB: dưới mức đó chi phí nén lớn hơn phần tiết kiệm được.
+ */
+const GZIP_MIN_BYTES = 8192;
+app.use((req, res, next) => {
+  if (!/\bgzip\b/.test(req.headers['accept-encoding'] || '')) return next();
+
+  const sendJson = res.json.bind(res);
+  res.json = (body) => {
+    const buf = Buffer.from(JSON.stringify(body));
+    if (buf.length < GZIP_MIN_BYTES) return sendJson(body);
+
+    const gz = zlib.gzipSync(buf, { level: 6 });
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Encoding', 'gzip');
+    res.setHeader('Vary', 'Accept-Encoding');   // proxy/cache không trộn 2 biến thể
+    return res.end(gz);
+  };
+  next();
+});
+
 app.use(express.static(publicDir));
 
 // Raw report cached in memory (format version 3, see PROJECT_CONTEXT.md §7)
@@ -51,8 +81,9 @@ let syncInFlight = null;
 /** product|accountId|datePreset → { view, analysis }. Cleared whenever rawReport changes. */
 const viewCache = new Map();
 
-function cacheKey({ product, accountId, datePreset, activeTab, startDate, endDate }) {
-  return [product, accountId, datePreset, activeTab, startDate || '', endDate || ''].join('|');
+function cacheKey({ product, accountId, datePreset, activeTab, startDate, endDate, includeEmpty }) {
+  return [product, accountId, datePreset, activeTab, startDate || '', endDate || '',
+          includeEmpty ? 'all' : ''].join('|');
 }
 
 function invalidateViewCache() {
@@ -132,7 +163,8 @@ function readOptions(source) {
       ? source.datePreset
       : 'last_30d',
     startDate: wantsCustom ? String(source.startDate || '').slice(0, 10) : undefined,
-    endDate: wantsCustom ? String(source.endDate || '').slice(0, 10) : undefined
+    endDate: wantsCustom ? String(source.endDate || '').slice(0, 10) : undefined,
+    includeEmpty: source.includeEmpty === '1' || source.includeEmpty === true
   };
 }
 

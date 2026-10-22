@@ -26,7 +26,8 @@ const appState = {
   /** Aborts the previous /api/data request so a slow one can't overwrite a newer one. */
   pendingLoad: null,
   /** Campaign IDs selected for replication (Set<string>) */
-  selectedCampaignIds: new Set()
+  selectedCampaignIds: new Set(),
+  includeEmpty: false
 };
 
 /**
@@ -273,6 +274,15 @@ function initEventListeners() {
     });
   }
 
+  // Hiện / ẩn các chiến dịch rỗng. Mặc định ẩn (P-01): chúng chiếm 89% payload
+  // mà bộ lọc ACTIVE của bảng không bao giờ hiển thị.
+  document.getElementById('toggleEmptyCampaignsBtn')?.addEventListener('click', () => {
+    appState.includeEmpty = !appState.includeEmpty;
+    const txt = document.getElementById('toggleEmptyText');
+    if (txt) txt.textContent = appState.includeEmpty ? 'Ẩn CĐ rỗng' : 'Hiện tất cả';
+    loadData();
+  });
+
   // Sortable table headers
   const tableHead = document.querySelector('#campaignsDataTable thead');
   if (tableHead) {
@@ -402,6 +412,7 @@ async function loadData() {
     params.set('startDate', appState.customStart);
     params.set('endDate', appState.customEnd);
   }
+  if (appState.includeEmpty) params.set('includeEmpty', '1');
 
   // Cancel any request still in flight: changing account → date → product in quick
   // succession used to render whichever response happened to land last.
@@ -501,7 +512,26 @@ function applyPayload(json) {
   }
 
   syncExportLinks(json.view);
+  pruneSelection(json.view);
   renderAll();
+}
+
+/**
+ * Bỏ khỏi lựa chọn những chiến dịch không còn nằm trong view hiện tại.
+ *
+ * Tỉa theo tập chiến dịch mới chứ KHÔNG xoá sạch: đổi khoảng ngày (vẫn cùng tập
+ * chiến dịch) thì giữ được lựa chọn, còn đổi tab/tài khoản thì tự loại những cái
+ * không còn thuộc phạm vi.
+ *
+ * Không có bước này, thanh công cụ báo "đã chọn N" trong khi getSelectedCampaigns()
+ * trả về rỗng, và wizard nhân bản báo lỗi "chưa chọn chiến dịch nào".
+ */
+function pruneSelection(view) {
+  if (!view) return;
+  const present = new Set((view.campaigns || []).map(c => c.id));
+  for (const id of appState.selectedCampaignIds) {
+    if (!present.has(id)) appState.selectedCampaignIds.delete(id);
+  }
 }
 
 /** Shared chrome for the two sync buttons. */
@@ -1372,7 +1402,12 @@ function renderTable() {
     th.classList.toggle('asc', isActive && appState.sortAsc);
   });
 
-  if (countBadge) countBadge.textContent = `${filtered.length} chiến dịch`;
+  if (countBadge) {
+    const hidden = appState.view?.hiddenEmptyCampaigns || 0;
+    countBadge.textContent = hidden > 0
+      ? `${filtered.length} chiến dịch (ẩn ${formatNumber(hidden)} CĐ không chi tiêu)`
+      : `${filtered.length} chiến dịch`;
+  }
 
   if (filtered.length === 0) {
     tbody.innerHTML = `<tr><td colspan="17" class="table-empty">Không tìm thấy chiến dịch nào phù hợp với bộ lọc hiện tại</td></tr>`;
@@ -1591,10 +1626,17 @@ document.getElementById('deselectAllCampaignsBtn')?.addEventListener('click', ()
 
 // Open Replicate Modal button
 document.getElementById('openReplicateModalBtn')?.addEventListener('click', () => {
-  if (appState.selectedCampaignIds.size === 0) return;
-  // Trigger the modal from replicate-modal.js
+  // Kiểm tra trên tập THỰC SỰ lấy được, không phải trên size của Set: hai con số
+  // này từng lệch nhau khi đổi tab, dẫn tới wizard mở ra rồi báo lỗi 400.
+  const picked = getSelectedCampaigns();
+  if (picked.length === 0) {
+    showToast('Các chiến dịch đã chọn không thuộc tab/tài khoản đang xem. Hãy chọn lại.', 'warning');
+    appState.selectedCampaignIds.clear();
+    renderTable();
+    return;
+  }
   if (typeof window.openReplicateModal === 'function') {
-    window.openReplicateModal(getSelectedCampaigns(), appState.sessionToken);
+    window.openReplicateModal(picked, appState.sessionToken);
   }
 });
 

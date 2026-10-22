@@ -519,11 +519,37 @@ export function buildView(raw, options = {}) {
   });
 
   // Campaigns to display in table
-  const viewCampaigns = targetCampaigns
-    .filter(c => selectedProduct === 'ALL' || c.product === selectedProduct)
+  const scoped = targetCampaigns
+    .filter(c => selectedProduct === 'ALL' || c.product === selectedProduct);
+
+  /**
+   * Một chiến dịch chỉ cần gửi về client khi nó có thứ gì để xem: tiêu tiền,
+   * đang giữ ngân sách, ra lead, hoặc đang chạy.
+   *
+   * Đo thực tế 21/10/2026: 561/604 dòng trong kho không thoả điều kiện nào —
+   * chúng tốn 347 KB mỗi request chỉ để vẽ ra số 0, trong khi bộ lọc mặc định
+   * của bảng (ACTIVE) chỉ hiện 27 dòng.
+   *
+   * BẤT BIẾN: tiêu chí này bao gồm spend === 0 VÀ l1Count === 0, nên mọi dòng
+   * bị bỏ đóng góp đúng 0 vào tổng KPI. Vì vậy aggregate() BẮT BUỘC chạy trên
+   * `scoped` (trước khi lọc), không phải trên `viewCampaigns`.
+   * Xem test/report.test.js — "A-05: Σ các dòng chiến dịch + chưa gán = tổng KPI".
+   */
+  const hasSignal = (c) =>
+    c.spend > 0 ||
+    c.expectedDailyBudget > 0 ||
+    c.l1Count > 0 ||
+    c.effective_status === 'ACTIVE';
+
+  const includeEmpty = opts.includeEmpty === true || opts.includeEmpty === '1';
+
+  const viewCampaigns = (includeEmpty ? scoped : scoped.filter(hasSignal))
     .sort((a, b) => b.spend - a.spend || b.expectedDailyBudget - a.expectedDailyBudget);
 
-  const s = aggregate(viewCampaigns);
+  const hiddenEmptyCampaigns = scoped.length - viewCampaigns.length;
+
+  // Tổng KPI tính trên `scoped` để không phụ thuộc bộ lọc hiển thị ở trên.
+  const s = aggregate(scoped);
 
   // 4. Funnel for the active view. Built from exactly the same buckets as the rows above,
   //    so Σ(rows) + unassigned === summary by construction (see test/report.test.js).
@@ -697,6 +723,8 @@ export function buildView(raw, options = {}) {
     trendGranularity,
     placements,
     campaigns: viewCampaigns,
+    /** Số chiến dịch bị ẩn vì không chi tiêu / không lead / không chạy (P-01). */
+    hiddenEmptyCampaigns,
     recentEnrolled: leadAttr.enrolled.slice(0, 10).map(publicEnrolled),
     warnings: raw.warnings || []
   };
