@@ -108,6 +108,7 @@
               <i data-lucide="download"></i>
             </button>
             <div id="exportMenu" class="dropdown-menu">
+              <div class="dropdown-note" id="exportScopeNote"></div>
               <a id="exportCampaignsLink" href="/api/export/campaigns" class="dropdown-item" download>
                 <i data-lucide="file-spreadsheet"></i> CSV Chiến dịch (Excel)
               </a>
@@ -162,7 +163,10 @@
         <button id="emptyActionBtn" class="btn btn-primary">Cài đặt Token</button>
       </section>
 
-        <!-- ============ 5 TABS NAVIGATION ============ -->
+      <!-- Bọc toàn bộ nội dung báo cáo. app.js ẩn/hiện khối này theo trạng thái
+           rỗng (showEmptyState / hideEmptyState), và CSS làm mờ nó khi đang đồng bộ
+           (body.is-syncing .report-content). Thẻ đóng của nó ở cuối <main>. -->
+      <div id="reportContent" class="report-content">
 
         <!-- ============ AI HERO ============ -->
         <section class="ai-hero-card" id="aiHeroSection">

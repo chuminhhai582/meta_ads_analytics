@@ -370,11 +370,16 @@ app.get('/docs/huong-dan-token', (req, res) => {
 });
 
 // Cross-Post & Creative Replication
-app.use('/api/cp/publish', requireSessionToken);
-app.use('/api/cp/replicate-ad', requireSessionToken);
-app.use('/api/cp/analyze-campaigns', requireSessionToken);
-app.use('/api/cp/bulk-replicate', requireSessionToken);
-app.use('/api/cp/refresh-cache', requireSessionToken);
+//
+// Mọi request GHI dưới /api/cp đều cần token phiên. Danh sách trắng theo đường dẫn
+// đã bỏ sót 3 route của Ads Creation Studio (create-campaign, create-adset,
+// batch-create-ads) khi chúng được thêm vào ngày 21/10 — đó là những route TẠO
+// chiến dịch / nhóm QC / quảng cáo THẬT trên BM.
+// Mặc-định-an-toàn: route ghi mới tự được bảo vệ, không cần nhớ thêm vào danh sách.
+app.use('/api/cp', (req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD') return next();
+  return requireSessionToken(req, res, next);
+});
 app.use('/api/cp', crossPostRouter);
 
 app.get('/cross-post', (req, res) => {

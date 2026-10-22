@@ -432,6 +432,49 @@ async function loadData() {
   }
 }
 
+/**
+ * Đồng bộ 3 link Xuất file với bộ lọc server ĐANG áp dụng.
+ *
+ * Href tĩnh trong index.html khiến mọi lần xuất đều ra file ALL / last_30d bất kể
+ * đang xem gì — im lặng, chỉ nhận ra khi mở file lên đếm dòng.
+ *
+ * Dùng `view.*` (server trả về) chứ KHÔNG dùng `appState.*` (người dùng vừa chọn):
+ * server có thể quay về last_30d nếu khoảng tự chọn không dùng được.
+ */
+function syncExportLinks(view) {
+  if (!view) return;
+  const q = new URLSearchParams({
+    product:    view.product    || 'ALL',
+    accountId:  view.accountId  || 'ALL',
+    datePreset: view.datePreset || 'last_30d',
+    tab:        view.activeTab  || 'all'
+  });
+  if (view.isCustomRange && view.dateRange) {
+    q.set('startDate', view.dateRange.startDate);
+    q.set('endDate',   view.dateRange.endDate);
+  }
+
+  const links = {
+    exportCampaignsLink: '/api/export/campaigns',
+    exportDailyLink:     '/api/export/daily',
+    exportJsonLink:      '/api/export/json'
+  };
+  for (const [id, base] of Object.entries(links)) {
+    const el = document.getElementById(id);
+    if (el) el.href = `${base}?${q}`;
+  }
+
+  // Nói rõ sẽ xuất cái gì, để người dùng không phải mở file lên mới biết.
+  const note = document.getElementById('exportScopeNote');
+  if (note && view.dateRange && view.summary) {
+    const prod = view.product === 'ALL' ? 'Tất cả 4 SP' : (view.product ? view.product.toUpperCase() : 'TẤT CẢ');
+    const acc  = view.accountId === 'ALL' ? 'Toàn BM' : `TK ${view.accountId}`;
+    note.textContent =
+      `${prod} • ${acc} • ${view.dateRange.startDate} → ${view.dateRange.endDate} ` +
+      `• ${view.summary.campaignCount} CĐ`;
+  }
+}
+
 /** Adopt a {view, analysis} payload and repaint everything. */
 function applyPayload(json) {
   hideEmptyState();
@@ -457,6 +500,7 @@ function applyPayload(json) {
     appState.customEnd = json.view.dateRange.endDate;
   }
 
+  syncExportLinks(json.view);
   renderAll();
 }
 
@@ -536,6 +580,13 @@ function showEmptyState(title, desc) {
 
   if (badge) badge.className = 'account-badge badge-idle';
   if (badgeText) badgeText.textContent = 'Chưa kết nối';
+
+  // Xoá dữ liệu phiên trước: giữ lại số cũ khiến người dùng tưởng trạng thái rỗng
+  // chỉ là thông báo phụ, chứ không phải "chưa có dữ liệu".
+  appState.view = null;
+  appState.analysis = null;
+  appState.selectedCampaignIds.clear();
+
   refreshIcons();
 }
 

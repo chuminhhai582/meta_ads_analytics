@@ -55,6 +55,18 @@
   --shadow-hover: 0 14px 28px rgba(0, 0, 0, 0.4);
   --transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   --font-display: 'Outfit', sans-serif;
+
+  /* Bí danh cho các token mà phần Tabs / Funnel / Enrolled đang gọi. Chúng được
+     viết theo tên của một hệ token khác và chưa từng giải được, nên nền tab đang
+     chọn, hover và transition im lặng biến mất (không có lỗi console).
+     Giữ dạng bí danh để màu vẫn chỉ có MỘT nguồn duy nhất ở trên. */
+  --surface-1:       var(--bg-card-solid);
+  --surface-2:       rgba(255, 255, 255, 0.07);
+  --surface-hover:   var(--bg-hover);
+  --border-medium:   var(--border-strong);
+  --primary-accent:  var(--primary-text);
+  --transition-fast: 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  --font-mono:       'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
 }
 
 /* ---------- Reset & base ---------- */
@@ -310,6 +322,12 @@ body.is-syncing .report-content { opacity: 0.55; pointer-events: none; transitio
 }
 .dropdown-item svg { width: 16px; height: 16px; }
 .dropdown-item:hover { color: white; background: rgba(0, 128, 251, 0.15); }
+.dropdown-note {
+  padding: 8px 12px;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+}
 
 /* ---------- Notices & empty state ---------- */
 .notice-area { display: flex; flex-direction: column; gap: var(--space-2); }
