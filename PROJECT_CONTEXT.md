@@ -121,6 +121,11 @@ Local_phantich_ads/
 │   ├── ai-analyst.js                 # Động cơ chẩn đoán rule-based chuẩn CPA tin nhắn
 │   ├── export-csv.js                 # Xuất CSV UTF-8 BOM & JSON
 │   └── server.js                     # Express server + REST API (chỉ loopback + token CSRF)
+├── docs/                             # Tài liệu & lưu trữ
+│   └── archive/                      # Báo cáo rà soát & hướng dẫn lịch sử đã hoàn thành
+│       ├── BAO_CAO_RA_SOAT_2026-10-16.md
+│       ├── HUONG_DAN_FIX_2026-10-22.md
+│       └── HUONG_DAN_LAY_TOKEN_TU_N8N.md
 ├── mcp-launcher.js                   # Khởi chạy @mikusnuz/meta-ads-mcp
 ├── .env                              # BÍ MẬT: token, app secret (gitignored)
 ├── .env.example                      # Mẫu biến môi trường
@@ -304,7 +309,7 @@ mọi lead từ đầu — nên các trường được cập nhật trên lead 
 
 ### Đợt rà soát 2026-10-22 — Đã hoàn thành 28/28 hạng mục (Đợt 1–4, 64/64 tests PASS ✅)
 
-Báo cáo chi tiết & hướng dẫn kỹ thuật: [`HUONG_DAN_FIX_2026-10-22.md`](./HUONG_DAN_FIX_2026-10-22.md)
+Báo cáo chi tiết & hướng dẫn kỹ thuật: [`HUONG_DAN_FIX_2026-10-22.md`](./docs/archive/HUONG_DAN_FIX_2026-10-22.md)
 
 1. **Đợt 1 — Giao diện & Bảo mật (4/4 ✅)**:
    - ✅ **U-01 + F-03**: Thêm lại `<div id="reportContent">`, sửa lỗi empty state "Không có chiến dịch nào".
@@ -340,7 +345,7 @@ Báo cáo chi tiết & hướng dẫn kỹ thuật: [`HUONG_DAN_FIX_2026-10-22.m
 
 ### Đợt rà soát 2026-10-16 — đã sửa toàn bộ 31 phát hiện (đã duyệt)
 
-Báo cáo đầy đủ kèm số đo kiểm chứng: [`BAO_CAO_RA_SOAT_2026-10-16.md`](./BAO_CAO_RA_SOAT_2026-10-16.md)
+Báo cáo đầy đủ kèm số đo kiểm chứng: [`BAO_CAO_RA_SOAT_2026-10-16.md`](./docs/archive/BAO_CAO_RA_SOAT_2026-10-16.md)
 
 **Nhóm A — số liệu sai (7/7 ✅)**
 1. ✅ **A-01 Ghép lead đúng qua `adMap`**: sync kéo thêm `act_X/ads?fields=id,campaign_id` dựng bảng tra `adId → campaignId` (schema **v3**). Trước đây so Ad ID với Campaign ID — 2 loại đối tượng khác nhau, 0/1.142 lead khớp.
@@ -415,3 +420,4 @@ Báo cáo đầy đủ kèm số đo kiểm chứng: [`BAO_CAO_RA_SOAT_2026-10-1
 | 2026-10-21 | **Tối ưu toàn diện UI/UX (Đã duyệt)**: (1) Sửa triệt để lỗi rớt dòng nút Export trên Header Dashboard, gom nhóm tiện ích Sheet/Token/Export thành toolbar gọn gàng; (2) Thêm Sticky Column cho 2 cột Checkbox + Tên chiến dịch khi cuộn ngang bảng giúp không bị mất dấu; (3) Thêm nút Thu gọn/Mở rộng cho khối Khuyến nghị AI giúp đưa bảng số liệu lên gần tầm mắt; (4) Căn chỉnh Header trang Cross-Post Manager thẳng hàng phẳng phiu, cân đối 2 bên; (5) Bổ sung Dark Custom Scrollbar thanh mảnh, tinh tế cho toàn bộ modal và bảng. |
 | 2026-10-21 | **Nâng cấp Ads Creation Studio 4 bước (Đã duyệt)**: (1) Bổ sung quy trình tạo chiến dịch, tạo nhóm quảng cáo kèm targeting (tuổi, giới tính, khu vực địa lý, placements) và tạo hàng loạt quảng cáo; (2) Hỗ trợ 3 cách chuẩn bị nội dung: Multi-post Fanpage, Nhập danh sách nội dung (Custom Cards), và Nhân bản Ads mẫu; (3) Xem trước Ma trận quảng cáo động (Matrix Preview); (4) Khắc phục triệt để lỗi Standard Enhancements / copies deprecated của Meta bằng cách khởi tạo trực tiếp Creative sạch qua `POST act_{id}/adcreatives` và `POST act_{id}/ads`; (5) Giữ an toàn tuyệt đối với trạng thái PAUSED mặc định và giãn cách 1.5s - 2s chống spam API. |
 | 2026-10-22 | **Rà soát & tối ưu toàn diện 28 hạng mục (Đợt 1–4, 64/64 tests PASS - Đã duyệt)**: (1) Sửa layout footer, định nghĩa 7 biến CSS thiếu, liên kết export theo bộ lọc, chặn CSRF cho API ghi; (2) Lọc chiến dịch rỗng khỏi payload (−89%), nén gzip bằng zlib native (−94%), bảo toàn 100% bất biến KPI; (3) Bổ sung 15 automated tests (tổng 64 tests), chốt cờ debounce & chốt chống chạy trùng, cập nhật Chart tại chỗ, a11y bàn phím & modal; (4) Bật/tắt nhóm cột bảng, Job model nhân bản hàng loạt chống timeout, chuẩn hoá snapshot v4 vs view v5, đọc RAM trực tiếp, compact cache, ghim CDN + static cache headers, nâng tương phản WCAG AA, prefers-reduced-motion + print style. |
+| 2026-10-22 | **Lưu trữ & dọn dẹp tài liệu hoàn thành (Đã duyệt)**: Chuyển các báo cáo rà soát và hướng dẫn đã hoàn thành (BAO_CAO_RA_SOAT_2026-10-16.md, HUONG_DAN_FIX_2026-10-22.md, HUONG_DAN_LAY_TOKEN_TU_N8N.md) vào thư mục docs/archive/ giúp thư mục gốc gọn gàng. |

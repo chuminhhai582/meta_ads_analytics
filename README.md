@@ -76,13 +76,14 @@ Local_phantich_ads/
 ├── test/report.test.js             # 32 test khoá lại các chỉ số quan trọng
 ├── .env                            # Token & App secret (bảo mật, không commit)
 ├── .env.example                    # File mẫu biến môi trường
-├── .backups/                       # Các bản sao lưu cũ (không commit)
+├── docs/archive/                   # Tài liệu & báo cáo rà soát lịch sử đã hoàn thành
+│   ├── BAO_CAO_RA_SOAT_2026-10-16.md
+│   ├── HUONG_DAN_FIX_2026-10-22.md
+│   └── HUONG_DAN_LAY_TOKEN_TU_N8N.md
 ├── mcp-launcher.js                 # Khởi chạy Meta Ads MCP Server
 ├── package.json
 ├── HUONG_DAN_LAY_TOKEN_META.md     # Cẩm nang lấy token Meta trong 2 phút
-├── HUONG_DAN_LAY_TOKEN_TU_N8N.md   # Lấy lại token Meta có sẵn trong n8n (cPanel)
 ├── PROJECT_CONTEXT.md              # Bối cảnh & tài liệu kiến trúc toàn diện
-├── BAO_CAO_RA_SOAT_2026-10-16.md   # Báo cáo rà soát & 31 phát hiện đã sửa
 └── README.md
 ```
 
