@@ -2281,35 +2281,35 @@ rm -rf .backups
 
 # Checklist hoàn thành
 
-| Mã | Mục | Đợt | ☐ |
+| Mã | Mục | Đợt | Trạng thái |
 |---|---|---|---|
-| U-01 + F-03 | Thêm lại `<div id="reportContent">` | 1 | ☐ |
-| U-02 | Định nghĩa 7 biến CSS còn thiếu | 1 | ☐ |
-| F-01 | Gắn bộ lọc vào 3 link Xuất file | 1 | ☐ |
-| S-01 | Chặn CSRF theo phương thức cho `/api/cp` | 1 | ☐ |
-| P-01 | Lọc chiến dịch rỗng khỏi payload | 2 | ☐ |
-| P-02 | Nén gzip bằng `zlib` | 2 | ☐ |
-| F-02 | Tỉa lựa chọn chiến dịch theo view | 2 | ☐ |
-| Q-01 | Test cho `cross-post.js` + route xuất file | 3 | ☐ |
-| F-05 | Chốt chống chạy trùng | 3 | ☐ |
-| P-03 | Debounce ô tìm kiếm | 3 | ☐ |
-| P-04 | Cập nhật biểu đồ tại chỗ | 3 | ☐ |
-| U-04 | Sắp xếp bằng bàn phím + `aria-sort` | 3 | ☐ |
-| U-05 | Bẫy focus + Esc cho modal | 3 | ☐ |
-| U-03 | Nhóm cột bật/tắt | 4 | ☐ |
-| F-04 | Tiến độ thật cho nhân bản | 4 | ☐ |
-| Q-02 | Dọn `fatigueApplicable` | 4 | ☐ |
-| Q-03 | Thống nhất số phiên bản schema | 4 | ☐ |
-| P-05 | Bỏ đọc lại JSON từ disk | 4 | ☐ |
-| P-06 | Cache ghi compact | 4 | ☐ |
-| P-07 | Comment cho `VIEW_CACHE_MAX` | 4 | ☐ |
-| F-06 | Gộp route `ad-accounts` trùng | 4 | ☐ |
-| S-02 | Ghim `lucide`, thêm `defer` + `?v=` | 4 | ☐ |
-| U-06 | Nâng tương phản `--text-muted` | 4 | ☐ |
-| U-07 | `prefers-reduced-motion` + print | 4 | ☐ |
-| U-08 | Giảm style inline, thống nhất `max-width` | 4 | ☐ |
-| Q-04 | Bỏ trường payload không ai đọc | 4 | ☐ |
-| Q-05 | Gắn tag git rồi xoá `.backups/` | 4 | ☐ |
+| U-01 + F-03 | Thêm lại `<div id="reportContent">` | 1 | ☑ Hoàn tất |
+| U-02 | Định nghĩa 7 biến CSS còn thiếu | 1 | ☑ Hoàn tất |
+| F-01 | Gắn bộ lọc vào 3 link Xuất file | 1 | ☑ Hoàn tất |
+| S-01 | Chặn CSRF theo phương thức cho `/api/cp` | 1 | ☑ Hoàn tất |
+| P-01 | Lọc chiến dịch rỗng khỏi payload | 2 | ☑ Hoàn tất |
+| P-02 | Nén gzip bằng `zlib` | 2 | ☑ Hoàn tất |
+| F-02 | Tỉa lựa chọn chiến dịch theo view | 2 | ☑ Hoàn tất |
+| Q-01 | Test cho `cross-post.js` + route xuất file | 3 | ☑ Hoàn tất |
+| F-05 | Chốt chống chạy trùng | 3 | ☑ Hoàn tất |
+| P-03 | Debounce ô tìm kiếm | 3 | ☑ Hoàn tất |
+| P-04 | Cập nhật biểu đồ tại chỗ | 3 | ☑ Hoàn tất |
+| U-04 | Sắp xếp bằng bàn phím + `aria-sort` | 3 | ☑ Hoàn tất |
+| U-05 | Bẫy focus + Esc cho modal | 3 | ☑ Hoàn tất |
+| U-03 | Nhóm cột bật/tắt | 4 | ☑ Hoàn tất |
+| F-04 | Tiến độ thật cho nhân bản | 4 | ☑ Hoàn tất |
+| Q-02 | Dọn `fatigueApplicable` | 4 | ☑ Hoàn tất |
+| Q-03 | Thống nhất số phiên bản schema | 4 | ☑ Hoàn tất |
+| P-05 | Bỏ đọc lại JSON từ disk | 4 | ☑ Hoàn tất |
+| P-06 | Cache ghi compact | 4 | ☑ Hoàn tất |
+| P-07 | Comment cho `VIEW_CACHE_MAX` | 4 | ☑ Hoàn tất |
+| F-06 | Gộp route `ad-accounts` trùng | 4 | ☑ Hoàn tất |
+| S-02 | Ghim `lucide`, thêm `defer` + `?v=` | 4 | ☑ Hoàn tất |
+| U-06 | Nâng tương phản `--text-muted` | 4 | ☑ Hoàn tất |
+| U-07 | `prefers-reduced-motion` + print | 4 | ☑ Hoàn tất |
+| U-08 | Giảm style inline, thống nhất `max-width` | 4 | ☑ Hoàn tất |
+| Q-04 | Bỏ trường payload không ai đọc | 4 | ☑ Hoàn tất |
+| Q-05 | Gắn tag git rồi xoá `.backups/` | 4 | ☑ Hoàn tất |
 
 ---
 
