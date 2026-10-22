@@ -20,7 +20,7 @@ const publicDir = path.resolve(ROOT_DIR, 'public');
 const VIEW_CACHE_MAX = 32;
 
 const app = express();
-// No cors() on purpose. The dashboard is same-origin, and sending
+// Không dùng CORS middleware (cố tình). The dashboard is same-origin, and sending
 // `Access-Control-Allow-Origin: *` let any website the user had open read this BM's spend,
 // revenue and customer phone numbers. See quy-tac-du-an.md §3.
 app.disable('x-powered-by');

@@ -615,6 +615,7 @@ test('B-01: server.js không dùng cors và không phát header CORS', () => {
   // Strip comments first — the file explains WHY cors is absent, and that must not
   // make this test fail.
   const code = src
+    .replace(/\r/g, '')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
     .map(line => line.replace(/\/\/.*$/, ''))
