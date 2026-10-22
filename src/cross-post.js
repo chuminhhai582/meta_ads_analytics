@@ -19,6 +19,20 @@ export const crossPostRouter = express.Router();
 const BASE_URL = 'https://graph.facebook.com';
 const API_VERSION = config.apiVersion || 'v21.0';
 
+/**
+ * Giới hạn chống spam API Meta. Đây là những con số BẢO VỆ TÀI KHOẢN QUẢNG CÁO —
+ * đừng đổi mà không có lý do nghiệp vụ, và có test khoá lại từng con số.
+ */
+export const SAFETY_LIMITS = {
+  PUBLISH_MAX_PAGES:     10,
+  BULK_REPLICATE_MAX:    10,
+  BATCH_ADS_MAX:         15,
+  ANALYZE_CAMPAIGNS_MAX: 20,
+  DELAY_PUBLISH_MS:      1500,
+  DELAY_CREATE_MS:       2000,
+  DELAY_TARGET_MS:       2500
+};
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '..', 'data');
 const PAGES_CACHE_FILE = join(DATA_DIR, 'cp_pages_cache.json');
@@ -365,19 +379,45 @@ crossPostRouter.get('/pages/:pageId/posts', async (req, res) => {
 });
 
 /**
+ * Chặn chạy trùng theo tên việc.
+ *
+ * Các route này tạo đối tượng THẬT trên Meta và mất 20–60 s mới trả lời, nên
+ * người dùng rất dễ bấm lại nút Thực thi — và tạo gấp đôi mọi thứ.
+ *
+ * Dùng res.on('finish'/'close') chứ không dùng try/finally trong handler: nếu
+ * client đóng kết nối giữa đường, 'close' vẫn bắn và chốt được nhả ra.
+ */
+const running = new Set();
+export function withLock(jobName) {
+  return (req, res, next) => {
+    if (running.has(jobName)) {
+      return res.status(429).json({
+        ok: false,
+        error: 'Lệnh trước chưa xong. Đợi hoàn tất rồi thử lại để tránh tạo trùng.'
+      });
+    }
+    running.add(jobName);
+    const release = () => running.delete(jobName);
+    res.on('finish', release);
+    res.on('close', release);
+    next();
+  };
+}
+
+/**
  * POST /api/cp/publish
  * Đăng bài đồng loạt lên nhiều Fanpage đích
  * Body: { targetPageIds: string[], message: string, imageUrl?: string, link?: string }
  */
-crossPostRouter.post('/publish', async (req, res) => {
+crossPostRouter.post('/publish', withLock('publish'), async (req, res) => {
   const { targetPageIds, message, imageUrl, link } = req.body;
 
   if (!Array.isArray(targetPageIds) || targetPageIds.length === 0) {
     return res.status(400).json({ ok: false, error: 'Vui lòng chọn ít nhất 1 Fanpage đích.' });
   }
 
-  if (targetPageIds.length > 10) {
-    return res.status(400).json({ ok: false, error: 'Mỗi lần đăng tối đa 10 Fanpage để đảm bảo an toàn tốc độ API.' });
+  if (targetPageIds.length > SAFETY_LIMITS.PUBLISH_MAX_PAGES) {
+    return res.status(400).json({ ok: false, error: `Mỗi lần đăng tối đa ${SAFETY_LIMITS.PUBLISH_MAX_PAGES} Fanpage để đảm bảo an toàn tốc độ API.` });
   }
 
   if (!message && !imageUrl && !link) {
@@ -448,9 +488,9 @@ crossPostRouter.post('/publish', async (req, res) => {
       });
     }
 
-    // Delay 1.5 giây giữa các page để tránh trigger spam protection của Meta
+    // Delay giữa các page để tránh trigger spam protection của Meta
     if (i < targetPageIds.length - 1) {
-      await new Promise(r => setTimeout(r, 1500));
+      await new Promise(r => setTimeout(r, SAFETY_LIMITS.DELAY_PUBLISH_MS));
     }
   }
 
@@ -634,6 +674,25 @@ crossPostRouter.post('/replicate-ad', async (req, res) => {
 });
 
 /**
+ * Dựng body gửi Meta cho một Campaign mới.
+ * Tách khỏi route để test được mà không cần mock fetch hay gọi Meta thật.
+ */
+export function buildCampaignBody({ name, objective = 'OUTCOME_ENGAGEMENT', dailyBudget }) {
+  const campBody = {
+    name: String(name).trim(),
+    objective,
+    status: 'PAUSED', // BẮT BUỘC PAUSED theo quy tắc an toàn
+    special_ad_categories: []
+  };
+
+  if (dailyBudget && Number(dailyBudget) > 0) {
+    campBody.daily_budget = String(Math.round(Number(dailyBudget)));
+  }
+
+  return campBody;
+}
+
+/**
  * POST /api/cp/create-campaign
  * Tạo chiến dịch mới trên tài khoản quảng cáo (mặc định PAUSED)
  * Body: { accountId: string, name: string, objective?: string, dailyBudget?: number }
@@ -645,16 +704,7 @@ crossPostRouter.post('/create-campaign', async (req, res) => {
   }
 
   const cleanAccId = accountId.replace(/^act_/, '');
-  const campBody = {
-    name: name.trim(),
-    objective,
-    status: 'PAUSED', // BẮT BUỘC PAUSED theo quy tắc an toàn
-    special_ad_categories: []
-  };
-
-  if (dailyBudget && Number(dailyBudget) > 0) {
-    campBody.daily_budget = String(Math.round(Number(dailyBudget)));
-  }
+  const campBody = buildCampaignBody({ name, objective, dailyBudget });
 
   try {
     const result = await callMeta(`act_${cleanAccId}/campaigns`, {
@@ -667,6 +717,49 @@ crossPostRouter.post('/create-campaign', async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
+/**
+ * Dựng body gửi Meta cho một Adset mới.
+ *
+ * Tách khỏi route để test được mà không cần mock fetch hay gọi Meta thật.
+ * Những bất biến ở đây bảo vệ tài khoản quảng cáo: status LUÔN PAUSED, và
+ * targeting không bao giờ rỗng (geo mặc định VN) để Meta không tự mở toàn cầu.
+ */
+export function buildAdsetBody({
+  campaignId, name, pageId, dailyBudget = 100000,
+  targeting = {}, optimizationGoal = 'CONVERSATIONS'
+}) {
+  const finalTargeting = {};
+
+  if (targeting.geoLocations && Object.keys(targeting.geoLocations).length > 0) {
+    finalTargeting.geo_locations = targeting.geoLocations;
+  } else {
+    finalTargeting.geo_locations = { countries: ['VN'] };
+  }
+
+  if (targeting.ageMin) finalTargeting.age_min = Number(targeting.ageMin);
+  if (targeting.ageMax) finalTargeting.age_max = Number(targeting.ageMax);
+  if (Array.isArray(targeting.genders) && targeting.genders.length > 0) {
+    finalTargeting.genders = targeting.genders;
+  }
+  if (Array.isArray(targeting.placements) && targeting.placements.length > 0) {
+    finalTargeting.publisher_platforms = targeting.placements;
+  }
+  if (Array.isArray(targeting.positions) && targeting.positions.length > 0) {
+    finalTargeting.facebook_positions = targeting.positions;
+  }
+
+  return {
+    name: String(name).trim(),
+    campaign_id: campaignId,
+    status: 'PAUSED',              // BẮT BUỘC — không bao giờ tạo ở trạng thái chạy
+    optimization_goal: optimizationGoal,
+    billing_event: 'IMPRESSIONS',
+    daily_budget: String(Math.round(Number(dailyBudget))),
+    promoted_object: { page_id: pageId },
+    targeting: finalTargeting
+  };
+}
 
 /**
  * POST /api/cp/create-adset
@@ -696,39 +789,9 @@ crossPostRouter.post('/create-adset', async (req, res) => {
   }
 
   const cleanAccId = accountId.replace(/^act_/, '');
-
-  // Xây dựng targeting
-  const finalTargeting = {};
-  if (targeting.geoLocations && Object.keys(targeting.geoLocations).length > 0) {
-    finalTargeting.geo_locations = targeting.geoLocations;
-  } else {
-    finalTargeting.geo_locations = { countries: ['VN'] };
-  }
-
-  if (targeting.ageMin) finalTargeting.age_min = Number(targeting.ageMin);
-  if (targeting.ageMax) finalTargeting.age_max = Number(targeting.ageMax);
-  if (Array.isArray(targeting.genders) && targeting.genders.length > 0) {
-    finalTargeting.genders = targeting.genders;
-  }
-
-  // Placements
-  if (Array.isArray(targeting.placements) && targeting.placements.length > 0) {
-    finalTargeting.publisher_platforms = targeting.placements;
-  }
-  if (Array.isArray(targeting.positions) && targeting.positions.length > 0) {
-    finalTargeting.facebook_positions = targeting.positions;
-  }
-
-  const adsetBody = {
-    name: name.trim(),
-    campaign_id: campaignId,
-    status: 'PAUSED', // BẮT BUỘC PAUSED
-    optimization_goal: optimizationGoal,
-    billing_event: 'IMPRESSIONS',
-    daily_budget: String(Math.round(Number(dailyBudget))),
-    promoted_object: { page_id: pageId },
-    targeting: finalTargeting
-  };
+  const adsetBody = buildAdsetBody({
+    campaignId, name, pageId, dailyBudget, targeting, optimizationGoal
+  });
 
   try {
     const result = await callMeta(`act_${cleanAccId}/adsets`, {
@@ -761,7 +824,7 @@ crossPostRouter.post('/create-adset', async (req, res) => {
  *   }>
  * }
  */
-crossPostRouter.post('/batch-create-ads', async (req, res) => {
+crossPostRouter.post('/batch-create-ads', withLock('batchAds'), async (req, res) => {
   const { accountId, adsetIds, pageId, items } = req.body;
 
   if (!accountId || !pageId || !Array.isArray(adsetIds) || adsetIds.length === 0) {
@@ -772,8 +835,8 @@ crossPostRouter.post('/batch-create-ads', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'Danh sách quảng cáo cần tạo không được rỗng.' });
   }
 
-  if (items.length > 15) {
-    return res.status(400).json({ ok: false, error: 'Tối đa 15 quảng cáo mỗi đợt để đảm bảo an toàn tốc độ API.' });
+  if (items.length > SAFETY_LIMITS.BATCH_ADS_MAX) {
+    return res.status(400).json({ ok: false, error: `Tối đa ${SAFETY_LIMITS.BATCH_ADS_MAX} quảng cáo mỗi đợt để đảm bảo an toàn tốc độ API.` });
   }
 
   const cleanAccId = accountId.replace(/^act_/, '');
@@ -958,8 +1021,8 @@ crossPostRouter.post('/analyze-campaigns', async (req, res) => {
   if (!Array.isArray(campaignIds) || campaignIds.length === 0) {
     return res.status(400).json({ ok: false, error: 'Cần chọn ít nhất 1 chiến dịch.' });
   }
-  if (campaignIds.length > 20) {
-    return res.status(400).json({ ok: false, error: 'Mỗi lần phân tích tối đa 20 chiến dịch.' });
+  if (campaignIds.length > SAFETY_LIMITS.ANALYZE_CAMPAIGNS_MAX) {
+    return res.status(400).json({ ok: false, error: `Mỗi lần phân tích tối đa ${SAFETY_LIMITS.ANALYZE_CAMPAIGNS_MAX} chiến dịch.` });
   }
 
   // Cần biết campaign thuộc ad account nào → đọc từ data lake
@@ -1117,8 +1180,8 @@ crossPostRouter.post('/bulk-replicate', async (req, res) => {
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ ok: false, error: 'Danh sách nhân bản trống.' });
   }
-  if (items.length > 10) {
-    return res.status(400).json({ ok: false, error: 'Tối đa 10 mục mỗi lần để bảo vệ tài khoản Meta.' });
+  if (items.length > SAFETY_LIMITS.BULK_REPLICATE_MAX) {
+    return res.status(400).json({ ok: false, error: `Tối đa ${SAFETY_LIMITS.BULK_REPLICATE_MAX} mục mỗi lần để bảo vệ tài khoản Meta.` });
   }
   if (bulkInFlight) {
     return res.status(429).json({ ok: false, error: 'Đang có 1 lệnh nhân bản khác đang chạy. Vui lòng đợi hoàn thành.' });

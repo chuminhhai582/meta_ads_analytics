@@ -303,6 +303,18 @@ body.is-syncing .report-content { opacity: 0.55; pointer-events: none; transitio
 .btn-icon { width: 42px; height: 42px; padding: 0; background: rgba(255, 255, 255, 0.04); color: var(--text-secondary); border-color: var(--border-subtle); }
 .btn-icon:hover { color: var(--text-primary); background: rgba(255, 255, 255, 0.1); }
 
+/* Trạng thái focus cho mọi control tương tác. Trước đây chỉ 3 selector có
+   :focus-visible, nên phần lớn giao diện không dùng được bằng bàn phím. */
+.btn:focus-visible,
+.btn-tool-item:focus-visible,
+.tab-btn:focus-visible,
+.btn-close:focus-visible,
+.dropdown-item:focus-visible,
+.campaign-row-chk:focus-visible {
+  outline: 2px solid var(--primary-text);
+  outline-offset: 2px;
+}
+
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { 100% { transform: rotate(360deg); } }
 
@@ -551,6 +563,26 @@ body.is-syncing .report-content { opacity: 0.55; pointer-events: none; transitio
 .data-table th.sorted { color: var(--primary-text); }
 .data-table th.sorted::after { content: ' ↓'; }
 .data-table th.sorted.asc::after { content: ' ↑'; }
+
+/* Nút trong tiêu đề bảng: chỉ thêm khả năng focus + phím Enter/Space,
+   không đổi hình dạng. `all: unset` xoá style mặc định của button, rồi
+   `justify-content: inherit` giữ được căn phải của .text-right. */
+.th-sort {
+  all: unset;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  justify-content: inherit;
+}
+.th-sort:focus-visible {
+  outline: 2px solid var(--primary-text);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
 
 /* Sticky Columns for Table: Checkbox (col 1) + Name (col 2) */
 .data-table th.th-checkbox,

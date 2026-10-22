@@ -48,6 +48,17 @@
   function formatNum(n) { return Number(n || 0).toLocaleString('vi-VN'); }
   function refreshIcons() { if (typeof lucide !== 'undefined') lucide.createIcons(); }
 
+  let replicateTrap = null;
+  function getTrap() {
+    if (!replicateTrap && modal && typeof window.trapModal === 'function') {
+      replicateTrap = window.trapModal(modal, () => {
+        if (mState.isExecuting && !confirm('Đang tạo quảng cáo trên Meta. Đóng cửa sổ?')) return false;
+        modal.style.display = 'none';
+      });
+    }
+    return replicateTrap;
+  }
+
   // ---- PUBLIC ----
   window.openReplicateModal = function (campaigns, sessionToken) {
     mState.selectedCampaigns = campaigns;
@@ -61,7 +72,10 @@
     mState.clonePlacements = true;
     mState.budgetAmount = 200000;
     mState.isExecuting = false;
-    if (modal) modal.style.display = 'flex';
+    if (modal) {
+      modal.style.display = 'flex';
+      getTrap()?.open();
+    }
     goToStep(1);
     loadStep1();
   };
@@ -109,9 +123,28 @@
   });
 
   closeBtn?.addEventListener('click', () => {
-    if (mState.isExecuting && !confirm('Đang thực thi. Đóng?')) return;
-    modal.style.display = 'none';
+    const trap = getTrap();
+    if (trap) {
+      trap.close();
+    } else {
+      if (mState.isExecuting && !confirm('Đang tạo quảng cáo trên Meta. Đóng cửa sổ?')) return;
+      if (modal) modal.style.display = 'none';
+    }
   });
+
+  if (modal) {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        const trap = getTrap();
+        if (trap) {
+          trap.close();
+        } else {
+          if (mState.isExecuting && !confirm('Đang tạo quảng cáo trên Meta. Đóng cửa sổ?')) return;
+          modal.style.display = 'none';
+        }
+      }
+    });
+  }
 
   // ============================================================
   // STEP 1: Analyze Campaigns
@@ -536,7 +569,12 @@
       nextBtn.style.display = 'inline-flex';
       nextBtn.textContent = 'Đóng';
       nextBtn.disabled = false;
-      nextBtn.onclick = () => { modal.style.display = 'none'; nextBtn.onclick = null; };
+      nextBtn.onclick = () => {
+        const trap = getTrap();
+        if (trap) trap.close();
+        else modal.style.display = 'none';
+        nextBtn.onclick = null;
+      };
 
     } catch (err) {
       if (progressFill) progressFill.style.width = '100%';
@@ -544,7 +582,12 @@
       nextBtn.style.display = 'inline-flex';
       nextBtn.textContent = 'Đóng';
       nextBtn.disabled = false;
-      nextBtn.onclick = () => { modal.style.display = 'none'; nextBtn.onclick = null; };
+      nextBtn.onclick = () => {
+        const trap = getTrap();
+        if (trap) trap.close();
+        else modal.style.display = 'none';
+        nextBtn.onclick = null;
+      };
     } finally {
       mState.isExecuting = false;
     }

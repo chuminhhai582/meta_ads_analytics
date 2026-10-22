@@ -1535,6 +1535,10 @@
       return;
     }
 
+    const execBtn = document.getElementById('studioExecuteBtn');
+    if (execBtn && execBtn.dataset.running === '1') return;
+    if (execBtn) execBtn.dataset.running = '1';
+
     studioState.isExecuting = true;
     if (btnStudioBack) btnStudioBack.style.display = 'none';
     if (btnStudioExecute) {
@@ -1674,6 +1678,7 @@
       if (pText) pText.textContent = 'Có lỗi xảy ra khi thực thi';
       alert(`Lỗi thực thi: ${err.message}`);
     } finally {
+      if (execBtn) execBtn.dataset.running = '0';
       studioState.isExecuting = false;
       if (btnStudioBack) btnStudioBack.style.display = 'inline-flex';
       if (btnStudioExecute) {

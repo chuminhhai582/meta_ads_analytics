@@ -100,6 +100,65 @@ function formatNumber(val) {
   return new Intl.NumberFormat('vi-VN').format(val);
 }
 
+/** Gộp các lần gọi liên tiếp thành một lần, sau `ms` kể từ lần gọi cuối. */
+function debounce(fn, ms) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+}
+
+/**
+ * Bẫy focus trong modal và đóng bằng Esc.
+ *
+ * Không có nó, Tab đi lạc ra các control sau lớp phủ — đặc biệt nguy hiểm với
+ * modal nhân bản vì nó tạo quảng cáo THẬT trên Meta và người dùng bàn phím
+ * không thấy mình đang ở đâu.
+ *
+ * Trả về { open, close } để bên gọi tự quyết định khi nào bật/tắt lớp phủ.
+ */
+function trapModal(modal, onClose) {
+  const SEL = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+  let restoreTo = null;
+
+  function focusables() {
+    return [...modal.querySelectorAll(SEL)].filter(el => !el.disabled && el.offsetParent);
+  }
+
+  function onKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if (e.key !== 'Tab') return;
+
+    const items = focusables();
+    if (items.length === 0) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+
+  function close() {
+    if (typeof onClose === 'function') {
+      const res = onClose();
+      if (res === false) return;
+    }
+    document.removeEventListener('keydown', onKey);
+    restoreTo?.focus(); // trả focus về chỗ người dùng đang đứng trước khi mở
+  }
+
+  return {
+    open() {
+      restoreTo = document.activeElement;
+      document.addEventListener('keydown', onKey);
+      focusables()[0]?.focus();
+    },
+    close
+  };
+}
+window.trapModal = trapModal;
+
 function formatCompactNumber(val) {
   if (val === undefined || val === null || isNaN(val) || val === 0) return '0';
   const abs = Math.abs(val);
@@ -260,9 +319,13 @@ function initEventListeners() {
   // Table search & status filter
   const tableSearchInput = document.getElementById('tableSearchInput');
   if (tableSearchInput) {
+    // Hoãn 180 ms: đủ để người dùng gõ xong một từ, vẫn cảm giác tức thì.
+    // Không hoãn thì mỗi ký tự dựng lại cả bảng (84 ms với 605 dòng) — gõ một
+    // từ khoá 16 ký tự tạo ra ~1,3 giây công việc chặn luồng chính.
+    const applySearch = debounce(() => renderTable(), 180);
     tableSearchInput.addEventListener('input', (e) => {
       appState.searchQuery = e.target.value.toLowerCase().trim();
-      renderTable();
+      applySearch();
     });
   }
 
@@ -319,12 +382,14 @@ function initEventListeners() {
   const emptyActionBtn = document.getElementById('emptyActionBtn');
   const configForm = document.getElementById('configForm');
 
-  const openModal = () => configModal.classList.add('open');
-  const closeModal = () => {
+  const configTrap = configModal ? trapModal(configModal, () => {
     configModal.classList.remove('open');
     const alertBox = document.getElementById('configAlertBox');
     if (alertBox) alertBox.classList.add('d-none');
-  };
+  }) : null;
+
+  const openModal = () => { if (configModal) { configModal.classList.add('open'); configTrap?.open(); } };
+  const closeModal = () => configTrap?.close();
 
   if (openConfigBtn) openConfigBtn.addEventListener('click', openModal);
   if (emptyActionBtn) emptyActionBtn.addEventListener('click', openModal);
@@ -957,11 +1022,10 @@ function renderDailyChart() {
   const canvas = document.getElementById('dailyPerformanceChart');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  if (dailyChart) dailyChart.destroy();
 
   const daily = appState.view?.dailyTrend || [];
   if (daily.length === 0) {
-    dailyChart = null;
+    if (dailyChart) { dailyChart.destroy(); dailyChart = null; }
     return;
   }
 
@@ -984,6 +1048,14 @@ function renderDailyChart() {
     trendHint.textContent = g && g.unit !== 'day'
       ? `Cột: chi tiêu • Đường: số tin nhắn — đang gộp ${g.label} (khoảng thời gian dài)`
       : 'Cột: chi tiêu • Đường: số tin nhắn (di chuột để xem giá/tin)';
+  }
+
+  if (dailyChart) {
+    dailyChart.data.labels = labels;
+    dailyChart.data.datasets[0].data = daily.map(d => d.spend);
+    dailyChart.data.datasets[1].data = daily.map(d => d.messages);
+    dailyChart.update('none');
+    return;
   }
 
   dailyChart = new Chart(ctx, {
@@ -1030,7 +1102,7 @@ function renderDailyChart() {
               if (ctx.dataset.yAxisID === 'y') {
                 return `Chi tiêu: ${formatCurrency(ctx.parsed.y)}`;
               }
-              const d = daily[ctx.dataIndex];
+              const d = appState.view?.dailyTrend?.[ctx.dataIndex];
               const cpaStr = d && d.cpa ? ` (CPA: ${formatCurrency(d.cpa)})` : '';
               return `Tin nhắn: ${ctx.parsed.y} tin${cpaStr}`;
             }
@@ -1155,7 +1227,6 @@ function renderCampaignChart() {
   const canvas = document.getElementById('campaignComparisonChart');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  if (campaignChart) campaignChart.destroy();
 
   const campaigns = [...(appState.view?.campaigns || [])]
     .filter(c => c.spend > 0)
@@ -1163,18 +1234,30 @@ function renderCampaignChart() {
     .slice(0, 8);
 
   if (campaigns.length === 0) {
-    campaignChart = null;
+    if (campaignChart) { campaignChart.destroy(); campaignChart = null; }
+    return;
+  }
+
+  const labels = campaigns.map(c => c.name.length > 28 ? c.name.slice(0, 26) + '...' : c.name);
+  const data = campaigns.map(c => c.spend);
+  const bgColors = campaigns.map(c => PRODUCT_COLORS[c.product] || '#38bdf8');
+
+  if (campaignChart) {
+    campaignChart.data.labels = labels;
+    campaignChart.data.datasets[0].data = data;
+    campaignChart.data.datasets[0].backgroundColor = bgColors;
+    campaignChart.update('none');
     return;
   }
 
   campaignChart = new Chart(ctx, {
     type: 'bar',
     data: {
-      labels: campaigns.map(c => c.name.length > 28 ? c.name.slice(0, 26) + '...' : c.name),
+      labels,
       datasets: [{
         label: 'Chi tiêu',
-        data: campaigns.map(c => c.spend),
-        backgroundColor: campaigns.map(c => PRODUCT_COLORS[c.product] || '#38bdf8'),
+        data,
+        backgroundColor: bgColors,
         borderRadius: 4
       }]
     },
@@ -1187,9 +1270,20 @@ function renderCampaignChart() {
         tooltip: {
           backgroundColor: '#0f1523',
           callbacks: {
-            title: (items) => campaigns[items[0].dataIndex]?.name || '',
+            title: (items) => {
+              const top = [...(appState.view?.campaigns || [])]
+                .filter(c => c.spend > 0)
+                .sort((a, b) => b.spend - a.spend)
+                .slice(0, 8);
+              return top[items[0].dataIndex]?.name || '';
+            },
             label: (ctx) => {
-              const c = campaigns[ctx.dataIndex];
+              const top = [...(appState.view?.campaigns || [])]
+                .filter(c => c.spend > 0)
+                .sort((a, b) => b.spend - a.spend)
+                .slice(0, 8);
+              const c = top[ctx.dataIndex];
+              if (!c) return '';
               return [
                 `Sản phẩm: ${c.productLabel}`,
                 `Chi tiêu: ${formatCurrency(c.spend)}`,
@@ -1214,23 +1308,33 @@ function renderPlacementChart() {
   const canvas = document.getElementById('placementDoughnutChart');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  if (placementChart) placementChart.destroy();
 
   const placements = (appState.view?.placements || []).filter(p => p.spend > 0);
   if (placements.length === 0) {
-    placementChart = null;
+    if (placementChart) { placementChart.destroy(); placementChart = null; }
     return;
   }
 
   const colors = ['#0080fb', '#06b6d4', '#8b5cf6', '#f59e0b', '#ec4899', '#94a3b8'];
+  const labels = placements.map(p => p.label || p.platform);
+  const data = placements.map(p => p.spend);
+  const bgColors = colors.slice(0, placements.length);
+
+  if (placementChart) {
+    placementChart.data.labels = labels;
+    placementChart.data.datasets[0].data = data;
+    placementChart.data.datasets[0].backgroundColor = bgColors;
+    placementChart.update('none');
+    return;
+  }
 
   placementChart = new Chart(ctx, {
     type: 'doughnut',
     data: {
-      labels: placements.map(p => p.label || p.platform),
+      labels,
       datasets: [{
-        data: placements.map(p => p.spend),
-        backgroundColor: colors.slice(0, placements.length),
+        data,
+        backgroundColor: bgColors,
         borderWidth: 0,
         hoverOffset: 6
       }]
@@ -1244,8 +1348,9 @@ function renderPlacementChart() {
           backgroundColor: '#0f1523',
           callbacks: {
             label: (ctx) => {
-              const p = placements[ctx.dataIndex];
-              return `${p.label}: ${formatCurrency(p.spend)} (${p.percentage}%)`;
+              const plc = (appState.view?.placements || []).filter(p => p.spend > 0);
+              const p = plc[ctx.dataIndex];
+              return p ? `${p.label}: ${formatCurrency(p.spend)} (${p.percentage}%)` : '';
             }
           }
         }
@@ -1400,6 +1505,9 @@ function renderTable() {
     const isActive = th.getAttribute('data-sort') === field;
     th.classList.toggle('sorted', isActive);
     th.classList.toggle('asc', isActive && appState.sortAsc);
+    // Cho trình đọc màn hình biết cột nào đang sắp xếp và theo chiều nào.
+    th.setAttribute('aria-sort',
+      isActive ? (appState.sortAsc ? 'ascending' : 'descending') : 'none');
   });
 
   if (countBadge) {

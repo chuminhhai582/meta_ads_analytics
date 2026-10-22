@@ -420,25 +420,29 @@
 
           <div class="table-responsive">
             <table class="data-table" id="campaignsDataTable">
+              <caption class="visually-hidden">
+                Danh sách chiến dịch với chi tiêu, tin nhắn, CPA và phễu tuyển sinh L1–L4.
+                Bấm tiêu đề cột để sắp xếp.
+              </caption>
               <thead>
                 <tr>
-                  <th class="th-checkbox" id="thSelectAll"><input type="checkbox" id="selectAllCampaignsChk" title="Chọn / bỏ chọn tất cả"></th>
-                  <th data-sort="name" id="thName">Chiến dịch</th>
-                  <th data-sort="productLabel" id="thProduct">Sản phẩm</th>
-                  <th data-sort="accountName" id="thAccount">Tài khoản</th>
-                  <th data-sort="effective_status" id="thStatus">Trạng thái</th>
-                  <th data-sort="expectedDailyBudget" id="thBudget" class="text-right">NS/ngày</th>
-                  <th data-sort="todaySpend" id="thToday" class="text-right">Chi hôm nay</th>
-                  <th data-sort="spend" id="thSpend" class="text-right">Chi tiêu kỳ</th>
-                  <th data-sort="messages" id="thMessages" class="text-right">Tin nhắn</th>
-                  <th data-sort="cpa" id="thCpa" class="text-right">Giá/tin</th>
-                  <th data-sort="l1Count" id="thL1" class="text-right">SĐT (L1)</th>
-                  <th data-sort="l3Count" id="thL3" class="text-right">Hẹn test (L3)</th>
-                  <th data-sort="l4Count" id="thL4" class="text-right">Nhập học (L4)</th>
-                  <th data-sort="revenue" id="thRevenue" class="text-right">Doanh thu</th>
-                  <th data-sort="fbSpend" id="thPlatform">Nền tảng (FB / IG / Khác)</th>
-                  <th data-sort="ctr" id="thCtr" class="text-right">CTR</th>
-                  <th data-sort="recommendation" id="thEval" class="text-center">Đánh giá</th>
+                  <th scope="col" class="th-checkbox" id="thSelectAll"><input type="checkbox" id="selectAllCampaignsChk" title="Chọn / bỏ chọn tất cả"></th>
+                  <th scope="col" data-sort="name" id="thName"><button type="button" class="th-sort">Chiến dịch</button></th>
+                  <th scope="col" data-sort="productLabel" id="thProduct"><button type="button" class="th-sort">Sản phẩm</button></th>
+                  <th scope="col" data-sort="accountName" id="thAccount"><button type="button" class="th-sort">Tài khoản</button></th>
+                  <th scope="col" data-sort="effective_status" id="thStatus"><button type="button" class="th-sort">Trạng thái</button></th>
+                  <th scope="col" data-sort="expectedDailyBudget" id="thBudget" class="text-right"><button type="button" class="th-sort">NS/ngày</button></th>
+                  <th scope="col" data-sort="todaySpend" id="thToday" class="text-right"><button type="button" class="th-sort">Chi hôm nay</button></th>
+                  <th scope="col" data-sort="spend" id="thSpend" class="text-right"><button type="button" class="th-sort">Chi tiêu kỳ</button></th>
+                  <th scope="col" data-sort="messages" id="thMessages" class="text-right"><button type="button" class="th-sort">Tin nhắn</button></th>
+                  <th scope="col" data-sort="cpa" id="thCpa" class="text-right"><button type="button" class="th-sort">Giá/tin</button></th>
+                  <th scope="col" data-sort="l1Count" id="thL1" class="text-right"><button type="button" class="th-sort">SĐT (L1)</button></th>
+                  <th scope="col" data-sort="l3Count" id="thL3" class="text-right"><button type="button" class="th-sort">Hẹn test (L3)</button></th>
+                  <th scope="col" data-sort="l4Count" id="thL4" class="text-right"><button type="button" class="th-sort">Nhập học (L4)</button></th>
+                  <th scope="col" data-sort="revenue" id="thRevenue" class="text-right"><button type="button" class="th-sort">Doanh thu</button></th>
+                  <th scope="col" data-sort="fbSpend" id="thPlatform"><button type="button" class="th-sort">Nền tảng (FB / IG / Khác)</button></th>
+                  <th scope="col" data-sort="ctr" id="thCtr" class="text-right"><button type="button" class="th-sort">CTR</button></th>
+                  <th scope="col" data-sort="recommendation" id="thEval" class="text-center"><button type="button" class="th-sort">Đánh giá</button></th>
                 </tr>
               </thead>
               <tbody id="campaignsTableBody"></tbody>
