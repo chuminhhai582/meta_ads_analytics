@@ -428,6 +428,11 @@ app.use('/api/cp', (req, res, next) => {
   if (req.method === 'GET' || req.method === 'HEAD') return next();
   return requireSessionToken(req, res, next);
 });
+
+// Route upload ảnh quảng cáo cần body tới 12 MB (ảnh base64), trong khi toàn
+// hệ thống giữ limit 256 KB. Nâng limit CHỈ cho đúng path này — nâng toàn cục
+// sẽ mở cửa cho request rác làm phình RAM.
+app.use('/api/cp/upload-ad-image', express.json({ limit: '12mb' }));
 app.use('/api/cp', crossPostRouter);
 
 app.get('/cross-post', (req, res) => {

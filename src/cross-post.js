@@ -32,9 +32,13 @@ export function setRawReportProvider(fn) { getRawReport = fn; }
 const jobs = new Map();
 const JOB_TTL_MS = 3600000;
 
-function newJob(total) {
+function newJob(total, extra = {}) {
   const id = crypto.randomUUID();
-  jobs.set(id, { status: 'running', done: 0, total, results: [], error: null, at: Date.now() });
+  jobs.set(id, {
+    status: 'running', done: 0, total,
+    results: [], error: null, at: Date.now(),
+    ...extra
+  });
   for (const [k, v] of jobs) if (Date.now() - v.at > JOB_TTL_MS) jobs.delete(k);
   return id;
 }
@@ -946,7 +950,9 @@ crossPostRouter.post('/create-campaign', async (req, res) => {
  */
 export function buildAdsetBody({
   campaignId, name, pageId, dailyBudget = 100000,
-  targeting = {}, optimizationGoal = 'CONVERSATIONS'
+  targeting = {}, optimizationGoal = 'CONVERSATIONS',
+  useCampaignBudget = false,
+  destinationType = ''
 }) {
   const finalTargeting = {};
 
@@ -968,16 +974,304 @@ export function buildAdsetBody({
     finalTargeting.facebook_positions = targeting.positions;
   }
 
-  return {
+  const body = {
     name: String(name).trim(),
     campaign_id: campaignId,
     status: 'PAUSED',              // BẮT BUỘC — không bao giờ tạo ở trạng thái chạy
     optimization_goal: optimizationGoal,
     billing_event: 'IMPRESSIONS',
-    daily_budget: String(Math.round(Number(dailyBudget))),
     promoted_object: { page_id: pageId },
     targeting: finalTargeting
   };
+
+  if (!useCampaignBudget) {
+    body.daily_budget = String(Math.round(Number(dailyBudget)));
+  }
+  if (destinationType) {
+    body.destination_type = destinationType;
+  }
+
+  return body;
+}
+
+const CTA_PATTERN = /^[A-Z_]{3,40}$/;
+
+export const CTA_SUGGESTIONS = [
+  'SEND_MESSAGE', 'MESSAGE_PAGE', 'WHATSAPP_MESSAGE', 'LEARN_MORE', 'SIGN_UP',
+  'APPLY_NOW', 'CONTACT_US', 'CALL_NOW', 'GET_QUOTE', 'GET_OFFER',
+  'SUBSCRIBE', 'BOOK_TRAVEL', 'SHOP_NOW', 'DOWNLOAD', 'NO_BUTTON'
+];
+
+/**
+ * Dựng body tạo AdCreative. Tách khỏi route để test được mà không gọi Meta.
+ */
+export function buildAdCreativeBody({ pageId, content = {} }) {
+  if (!pageId) throw new Error('buildAdCreativeBody: thiếu pageId.');
+
+  const c = content;
+  const name = `[Creative] ${String(c.name || 'Ad').slice(0, 80)}`;
+
+  if (c.type === 'page_post') {
+    const raw = String(c.sourcePostId || '').trim();
+    if (!raw) throw new Error('buildAdCreativeBody: nội dung page_post thiếu sourcePostId.');
+    const storyId = raw.includes('_') ? raw : `${pageId}_${raw}`;
+    return { name, object_story_id: storyId };
+  }
+
+  const cta = String(c.ctaType || 'SEND_MESSAGE').trim();
+  if (!CTA_PATTERN.test(cta)) {
+    throw new Error(`buildAdCreativeBody: CTA không hợp lệ "${cta}" (cần chữ IN HOA và _ , 3–40 ký tự).`);
+  }
+
+  const link = (c.linkUrl && String(c.linkUrl).trim())
+    ? String(c.linkUrl).trim()
+    : `https://m.me/${pageId}`;
+
+  const callToAction = (cta === 'NO_BUTTON') ? null : { type: cta, value: { link } };
+
+  const spec = { page_id: pageId };
+
+  if (c.videoId) {
+    spec.video_data = {
+      video_id: String(c.videoId),
+      title: c.headline || '',
+      message: c.message || ''
+    };
+    if (c.description) spec.video_data.link_description = c.description;
+    if (callToAction)  spec.video_data.call_to_action = callToAction;
+    if (c.imageHash)      spec.video_data.image_hash = c.imageHash;
+    else if (c.imageUrl)  spec.video_data.image_url  = c.imageUrl;
+  } else {
+    spec.link_data = {
+      link,
+      message: c.message || '',
+      name: c.headline || c.name || ''
+    };
+    if (c.description) spec.link_data.description = c.description;
+    if (callToAction)  spec.link_data.call_to_action = callToAction;
+    if (c.imageHash)      spec.link_data.image_hash = c.imageHash;
+    else if (c.imageUrl)  spec.link_data.picture    = c.imageUrl;
+  }
+
+  return { name, object_story_spec: spec };
+}
+
+/**
+ * Dựng body tạo Ad. Bất biến: status LUÔN 'PAUSED'.
+ */
+export function buildAdBody({ name, adsetId, creativeId }) {
+  if (!adsetId)   throw new Error('buildAdBody: thiếu adsetId.');
+  if (!creativeId) throw new Error('buildAdBody: thiếu creativeId.');
+
+  const clean = String(name || 'Quảng cáo')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, 200);
+
+  return {
+    name: clean || 'Quảng cáo',
+    adset_id: String(adsetId),
+    creative: { creative_id: String(creativeId) },
+    status: 'PAUSED'   // BẮT BUỘC
+  };
+}
+
+/**
+ * Dựng tên quảng cáo từ mẫu có token.
+ */
+export function renderAdName(pattern, ctx = {}) {
+  const tokens = {
+    content:  ctx.contentName  || '',
+    adset:    ctx.adsetName    || '',
+    campaign: ctx.campaignName || '',
+    index:    ctx.index != null ? String(ctx.index) : '',
+    date:     ctx.date || new Date().toISOString().slice(0, 10)
+  };
+
+  const raw = String(pattern || '{content} — {adset}')
+    .replace(/\{(content|adset|campaign|index|date)\}/g, (_, k) => tokens[k] || '');
+
+  const clean = raw.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  return (clean || 'Quảng cáo').slice(0, 200);
+}
+
+/**
+ * Giải trường attachTo của từng nhóm mới thành danh sách cặp.
+ */
+export function resolveAttachments({ campaigns = [], adsets = [], existingCampaigns = [] }) {
+  const newByKey = new Map(campaigns.map(c => [String(c.key), c]));
+  const cboByExistingId = new Map(existingCampaigns.map(c => [String(c.id), Boolean(c.hasCbo)]));
+  const out = [];
+
+  for (const a of adsets) {
+    const attach = String(a.attachTo || 'all');
+    let refs;
+
+    if (attach === 'all') {
+      if (campaigns.length === 0) {
+        throw new Error(`Nhóm "${a.name}" gán "all" nhưng plan không có chiến dịch mới nào.`);
+      }
+      refs = campaigns.map(c => ({
+        kind: 'new', key: String(c.key), name: c.name,
+        hasCbo: Number(c.dailyBudget || 0) > 0
+      }));
+    } else if (attach.startsWith('existing:')) {
+      const id = attach.slice('existing:'.length).trim();
+      if (!id) throw new Error(`Nhóm "${a.name}" có attachTo "existing:" thiếu ID chiến dịch.`);
+      refs = [{ kind: 'existing', id, name: `CĐ ${id}`, hasCbo: cboByExistingId.get(id) === true }];
+    } else {
+      const c = newByKey.get(attach);
+      if (!c) throw new Error(`Nhóm "${a.name}" gán vào chiến dịch không tồn tại trong plan: "${attach}".`);
+      refs = [{ kind: 'new', key: String(c.key), name: c.name, hasCbo: Number(c.dailyBudget || 0) > 0 }];
+    }
+
+    for (const ref of refs) {
+      if (ref.hasCbo && Number(a.dailyBudget || 0) > 0) {
+        throw new Error(
+          `Chiến dịch "${ref.name}" dùng ngân sách CBO — nhóm "${a.name}" không được đặt ngân sách riêng. ` +
+          `Bỏ ngân sách ở nhóm, hoặc bỏ CBO ở chiến dịch.`
+        );
+      }
+      out.push({ adsetSpec: a, campaignRef: ref, useCampaignBudget: ref.hasCbo });
+    }
+  }
+
+  const perCampaign = new Map();
+  for (const o of out) {
+    const k = o.campaignRef.kind === 'new' ? `new:${o.campaignRef.key}` : `ex:${o.campaignRef.id}`;
+    perCampaign.set(k, (perCampaign.get(k) || 0) + 1);
+  }
+  for (const [k, n] of perCampaign) {
+    if (n > SAFETY_LIMITS.BUILD_MAX_ADSETS_PER_CAMPAIGN) {
+      throw new Error(`Chiến dịch ${k} được gán ${n} nhóm mới — tối đa ${SAFETY_LIMITS.BUILD_MAX_ADSETS_PER_CAMPAIGN} nhóm/chiến dịch.`);
+    }
+  }
+  if (out.length > SAFETY_LIMITS.BUILD_MAX_NEW_ADSETS) {
+    throw new Error(`Tổng ${out.length} nhóm mới — tối đa ${SAFETY_LIMITS.BUILD_MAX_NEW_ADSETS}.`);
+  }
+
+  return out;
+}
+
+/**
+ * Ghép nội dung với nhóm đích theo 3 chế độ.
+ */
+export function expandPairs({ targets = [], contents = [], pairingMode = 'matrix', excluded = [] }) {
+  if (targets.length === 0)  throw new Error('expandPairs: không có nhóm quảng cáo đích.');
+  if (contents.length === 0) throw new Error('expandPairs: không có nội dung quảng cáo.');
+
+  const skip = new Set(excluded);
+  const keyOf = (c, t) => `${c.key}|${t.adsetId}`;
+  const raw = [];
+
+  if (pairingMode === 'matrix') {
+    for (const c of contents) for (const t of targets) raw.push({ content: c, target: t });
+  } else if (pairingMode === 'one_to_one') {
+    if (contents.length !== targets.length) {
+      throw new Error(`Chế độ 1-1 cần số nội dung bằng số nhóm (${contents.length} ≠ ${targets.length}).`);
+    }
+    for (let i = 0; i < contents.length; i++) raw.push({ content: contents[i], target: targets[i] });
+  } else if (pairingMode === 'round_robin') {
+    const n = Math.max(contents.length, targets.length);
+    for (let i = 0; i < n; i++) {
+      raw.push({ content: contents[i % contents.length], target: targets[i % targets.length] });
+    }
+  } else {
+    throw new Error(`pairingMode không hợp lệ: "${pairingMode}".`);
+  }
+
+  return raw
+    .filter(p => !skip.has(keyOf(p.content, p.target)))
+    .map((p, i) => ({ ...p, index: i + 1, pairKey: keyOf(p.content, p.target) }));
+}
+
+/**
+ * Đếm tổng đối tượng sẽ tạo và chặn trần.
+ */
+export function countPlanObjects({ campaignCount, adsetCount, adCount }) {
+  const total = campaignCount + adsetCount + adCount;
+
+  if (campaignCount > SAFETY_LIMITS.BUILD_MAX_NEW_CAMPAIGNS) {
+    throw new Error(`${campaignCount} chiến dịch — tối đa ${SAFETY_LIMITS.BUILD_MAX_NEW_CAMPAIGNS}.`);
+  }
+  if (adCount > SAFETY_LIMITS.BUILD_MAX_ADS) {
+    throw new Error(`${adCount} quảng cáo — tối đa ${SAFETY_LIMITS.BUILD_MAX_ADS}. Hãy bớt nội dung hoặc bớt nhóm đích.`);
+  }
+  if (total > SAFETY_LIMITS.BUILD_MAX_OBJECTS) {
+    throw new Error(`Tổng ${total} đối tượng — tối đa ${SAFETY_LIMITS.BUILD_MAX_OBJECTS} mỗi đợt.`);
+  }
+
+  return { campaignCount, adsetCount, adCount, total };
+}
+
+/**
+ * Ước tính thời gian chạy (giây).
+ */
+export function estimateRunSeconds({ campaignCount = 0, adsetCount = 0, adCount = 0, creativeCount = 0 }) {
+  const L = SAFETY_LIMITS;
+  const ms = campaignCount * (L.DELAY_BUILD_CAMPAIGN_MS || 2500)
+           + adsetCount    * (L.DELAY_BUILD_ADSET_MS || 2500)
+           + creativeCount * (L.DELAY_BUILD_CREATIVE_MS || 1200)
+           + adCount       * (L.DELAY_BUILD_AD_MS || 2000);
+  return Math.round(ms / 1000);
+}
+
+/**
+ * Bung spintax: "Con {chưa tập trung|học mãi không vào}?"
+ */
+export function expandSpintax(text, max = 6) {
+  const src = String(text || '');
+  const PAT = /\{([^{}]*)\}/;
+  if (!PAT.test(src)) return [src];
+
+  const expandOnce = (s) => {
+    const m = PAT.exec(s);
+    if (!m) return [s];
+    const head = s.slice(0, m.index);
+    const tail = s.slice(m.index + m[0].length);
+    const opts = m[1].split('|');
+    return opts.map(o => head + o.trim() + tail);
+  };
+
+  let frontier = [src];
+  let guard = 0;
+  while (frontier.some(s => PAT.test(s)) && guard++ < 12) {
+    frontier = frontier.flatMap(expandOnce);
+    if (frontier.length > 200) break;
+  }
+
+  const out = [];
+  for (const s of frontier) {
+    const v = s.replace(/\s{2,}/g, ' ').trim();
+    if (v && !out.includes(v)) out.push(v);
+    if (out.length >= max) break;
+  }
+  return out.length > 0 ? out : [src];
+}
+
+/**
+ * Kiểm tra ảnh upload bằng MAGIC BYTES (JPEG/PNG).
+ */
+export function normalizeImageUpload(buffer) {
+  if (!buffer || buffer.length === 0) throw new Error('Tệp ảnh rỗng.');
+  if (buffer.length > SAFETY_LIMITS.UPLOAD_IMAGE_MAX_BYTES) {
+    const mb = (SAFETY_LIMITS.UPLOAD_IMAGE_MAX_BYTES / 1024 / 1024).toFixed(0);
+    throw new Error(`Ảnh vượt ${mb} MB.`);
+  }
+  const isJpeg = buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF;
+  const isPng  = buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47;
+  if (!isJpeg && !isPng) throw new Error('Chỉ nhận ảnh JPEG hoặc PNG.');
+  return { mime: isJpeg ? 'image/jpeg' : 'image/png', bytes: buffer.length };
+}
+
+/**
+ * Lỗi Meta tạm thời đáng thử lại 1 lần.
+ */
+export function isTransientMetaError(err = {}) {
+  const transientCodes = new Set([1, 2, 4, 17, 341, 80000, 80004]);
+  if (transientCodes.has(Number(err.code))) return true;
+  return /rate limit|try again|temporarily|timeout/i.test(String(err.message || ''));
 }
 
 /**
@@ -1646,4 +1940,547 @@ crossPostRouter.post('/bulk-replicate', async (req, res) => {
     .catch(err => { job.status = 'error'; job.error = err.message; })
     .finally(() => { bulkInFlight = false; });
 });
+
+// =====================================================================
+// ENGINE BUILD-STRUCTURE & HÀNG LOẠT (TAB 2 & TAB 3)
+// =====================================================================
+
+const IMAGE_HASH_CACHE_FILE = join(DATA_DIR, 'cp_image_hashes.json');
+
+/** sha256 nội dung ảnh → image_hash đã upload. Tránh upload lại cùng 1 ảnh. */
+let imageHashCache = null;
+function loadImageHashCache() {
+  if (imageHashCache) return imageHashCache;
+  try {
+    imageHashCache = existsSync(IMAGE_HASH_CACHE_FILE)
+      ? JSON.parse(readFileSync(IMAGE_HASH_CACHE_FILE, 'utf-8'))
+      : {};
+  } catch { imageHashCache = {}; }
+  return imageHashCache;
+}
+function saveImageHashCache() {
+  try {
+    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(IMAGE_HASH_CACHE_FILE, JSON.stringify(imageHashCache, null, 2), 'utf-8');
+  } catch (e) { console.warn('[CrossPost] Không ghi được cache image hash:', e.message); }
+}
+
+/**
+ * POST /api/cp/upload-ad-image
+ * Body: { accountId, fileName, dataBase64 }
+ */
+crossPostRouter.post('/upload-ad-image', async (req, res) => {
+  const { accountId, fileName, dataBase64 } = req.body || {};
+  if (!accountId || !dataBase64) {
+    return res.status(400).json({ ok: false, error: 'Thiếu accountId hoặc dataBase64.' });
+  }
+
+  let buf;
+  try {
+    buf = Buffer.from(String(dataBase64), 'base64');
+    normalizeImageUpload(buf);
+  } catch (err) {
+    const code = /vượt/.test(err.message) ? 413 : 400;
+    return res.status(code).json({ ok: false, error: err.message });
+  }
+
+  const cleanAccId = String(accountId).replace(/^act_/, '');
+  const sha = crypto.createHash('sha256').update(buf).digest('hex');
+  const cacheKey = `${cleanAccId}:${sha}`;
+  const cache = loadImageHashCache();
+
+  if (cache[cacheKey]) {
+    return res.json({ ok: true, cached: true, ...cache[cacheKey] });
+  }
+
+  try {
+    const result = await callMeta(`act_${cleanAccId}/adimages`, {
+      method: 'POST',
+      body: { bytes: buf.toString('base64') }
+    });
+
+    const first = Object.values(result.images || {})[0] || {};
+    if (!first.hash) throw new Error('Meta không trả về image hash.');
+
+    const payload = {
+      imageHash: first.hash,
+      url: first.url || '',
+      width: first.width || 0,
+      height: first.height || 0,
+      fileName: String(fileName || 'image')
+    };
+    cache[cacheKey] = payload;
+    saveImageHashCache();
+
+    res.json({ ok: true, cached: false, ...payload });
+  } catch (err) {
+    console.error(`[CrossPost] Lỗi upload ảnh act_${cleanAccId}:`, err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------
+// Thư viện nội dung
+// ---------------------------------------------------------------------
+const CONTENT_LIBRARY_FILE = join(DATA_DIR, 'cp_content_library.json');
+const CONTENT_LIBRARY_MAX = 200;
+
+function readContentLibrary() {
+  try {
+    return existsSync(CONTENT_LIBRARY_FILE)
+      ? JSON.parse(readFileSync(CONTENT_LIBRARY_FILE, 'utf-8'))
+      : [];
+  } catch { return []; }
+}
+
+crossPostRouter.get('/content-library', (req, res) => {
+  res.json({ ok: true, items: readContentLibrary() });
+});
+
+crossPostRouter.post('/content-library', (req, res) => {
+  const incoming = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (incoming.length === 0) {
+    return res.status(400).json({ ok: false, error: 'Danh sách nội dung cần lưu đang rỗng.' });
+  }
+
+  const pick = (o) => ({
+    id: String(o.id || crypto.randomUUID()),
+    name: String(o.name || '').slice(0, 120),
+    message: String(o.message || '').slice(0, 4000),
+    headline: String(o.headline || '').slice(0, 200),
+    description: String(o.description || '').slice(0, 300),
+    linkUrl: String(o.linkUrl || '').slice(0, 500),
+    ctaType: String(o.ctaType || 'SEND_MESSAGE').slice(0, 40),
+    imageHash: String(o.imageHash || ''),
+    imageUrl: String(o.imageUrl || '').slice(0, 500),
+    videoId: String(o.videoId || ''),
+    tags: Array.isArray(o.tags) ? o.tags.slice(0, 8).map(t => String(t).slice(0, 30)) : [],
+    savedAt: new Date().toISOString()
+  });
+
+  try {
+    const existing = readContentLibrary();
+    const added = incoming.map(pick);
+    const addedIds = new Set(added.map(a => a.id));
+    const merged = [...added, ...existing.filter(e => !addedIds.has(e.id))].slice(0, CONTENT_LIBRARY_MAX);
+
+    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(CONTENT_LIBRARY_FILE, JSON.stringify(merged, null, 2), 'utf-8');
+
+    res.json({ ok: true, saved: added.length, total: merged.length });
+  } catch (err) {
+    console.error('[CrossPost] Lỗi ghi thư viện nội dung:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------
+// Route POST /api/cp/build-structure và engine runBuildStructure
+// ---------------------------------------------------------------------
+
+/**
+ * Chặn gửi lại cùng 1 plan (người dùng bấm 2 lần / mạng chập chờn).
+ * planId → { jobId, at }. Trong 10 phút thì trả lại đúng job cũ.
+ */
+const planJobs = new Map();
+const PLAN_DEDUPE_MS = 600000;
+
+crossPostRouter.post('/build-structure', withLock('buildStructure'), async (req, res) => {
+  const p = req.body || {};
+  const {
+    planId, accountId,
+    campaigns = [], adsets = [], existingTargets = [], existingCampaigns = [],
+    contents = [], pairingMode = 'matrix',
+    namePattern = '{content} — {adset}', excludedPairs = []
+  } = p;
+
+  // --- Chống gửi trùng ---
+  if (planId && planJobs.has(planId)) {
+    const prev = planJobs.get(planId);
+    if (Date.now() - prev.at < PLAN_DEDUPE_MS) {
+      return res.json({ ok: true, jobId: prev.jobId, deduped: true });
+    }
+  }
+
+  // --- Validate cơ bản ---
+  if (!accountId) {
+    return res.status(400).json({ ok: false, error: 'Thiếu accountId (mỗi đợt chỉ 1 tài khoản quảng cáo).' });
+  }
+  if (contents.length === 0) {
+    return res.status(400).json({ ok: false, error: 'Chưa có nội dung quảng cáo nào.' });
+  }
+  if (contents.length > SAFETY_LIMITS.BUILD_MAX_CONTENTS) {
+    return res.status(400).json({ ok: false, error: `Tối đa ${SAFETY_LIMITS.BUILD_MAX_CONTENTS} nội dung mỗi đợt.` });
+  }
+  if (adsets.length === 0 && existingTargets.length === 0) {
+    return res.status(400).json({ ok: false, error: 'Chưa chọn nhóm quảng cáo đích, cũng chưa khai nhóm tạo mới.' });
+  }
+  if (existingTargets.length > SAFETY_LIMITS.BUILD_MAX_TARGETS) {
+    return res.status(400).json({ ok: false, error: `Tối đa ${SAFETY_LIMITS.BUILD_MAX_TARGETS} nhóm đích mỗi đợt.` });
+  }
+
+  // --- Validate nội dung ---
+  for (const c of contents) {
+    if (!c.key) return res.status(400).json({ ok: false, error: 'Mỗi nội dung phải có "key" duy nhất.' });
+    if (c.type === 'page_post' && !c.sourcePostId) {
+      return res.status(400).json({ ok: false, error: `Nội dung "${c.name || c.key}" thiếu bài đăng nguồn.` });
+    }
+    if ((!c.type || c.type === 'custom') && !c.message && !c.imageHash && !c.imageUrl && !c.videoId) {
+      return res.status(400).json({ ok: false, error: `Nội dung "${c.name || c.key}" trống — cần ít nhất nội dung chữ hoặc ảnh/video.` });
+    }
+  }
+
+  // --- Giải attachTo + đếm đối tượng + ước tính thời gian ---
+  let attachments, pairs, counts, etaSeconds, creativeCount;
+  try {
+    attachments = resolveAttachments({ campaigns, adsets, existingCampaigns });
+
+    const plannedTargetCount = attachments.length + existingTargets.length;
+    if (plannedTargetCount > SAFETY_LIMITS.BUILD_MAX_TARGETS) {
+      throw new Error(`Tổng ${plannedTargetCount} nhóm đích — tối đa ${SAFETY_LIMITS.BUILD_MAX_TARGETS}.`);
+    }
+
+    const mockTargets = [
+      ...attachments.map((a, i) => ({ adsetId: `new_${i}`, adsetName: a.adsetSpec.name, campaignName: a.campaignRef.name })),
+      ...existingTargets.map(t => ({ adsetId: t.adsetId, adsetName: t.adsetName, campaignName: t.campaignName }))
+    ];
+    pairs = expandPairs({ targets: mockTargets, contents, pairingMode, excluded: excludedPairs });
+
+    creativeCount = new Set(pairs.map(x => `${x.target.pageId || ''}|${x.content.key}`)).size || contents.length;
+    counts = countPlanObjects({
+      campaignCount: campaigns.length,
+      adsetCount: attachments.length,
+      adCount: pairs.length
+    });
+    etaSeconds = estimateRunSeconds({ ...counts, creativeCount });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err.message });
+  }
+
+  // --- Mở job rồi trả về ngay ---
+  const totalSteps = counts.total;
+  const jobId = newJob(totalSteps, {
+    phase: 'campaigns',
+    created: { campaigns: [], adsets: [], ads: [] },
+    logs: [],
+    plan: { accountId, pairingMode, namePattern, counts, etaSeconds }
+  });
+  if (planId) planJobs.set(planId, { jobId, at: Date.now() });
+
+  res.json({
+    ok: true, jobId,
+    preview: { ...counts, creativeCount, etaSeconds }
+  });
+
+  const job = jobs.get(jobId);
+  runBuildStructure({
+    accountId, campaigns, attachments, existingTargets,
+    contents, pairingMode, namePattern, excludedPairs
+  }, job)
+    .then(() => { job.status = 'done'; })
+    .catch(err => { job.status = 'error'; job.error = err.message; pushLog(job, 'error', `Đợt chạy dừng: ${err.message}`); });
+});
+
+const JOB_LOG_MAX = 500;
+
+function pushLog(job, level, msg) {
+  job.logs = job.logs || [];
+  job.logs.push({ at: new Date().toISOString(), level, msg });
+  if (job.logs.length > JOB_LOG_MAX) job.logs.splice(0, job.logs.length - JOB_LOG_MAX);
+  const tag = level === 'error' ? 'ERR' : level === 'warn' ? 'WARN' : 'OK';
+  console.log(`[BuildStructure][${tag}] ${msg}`);
+}
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function callMetaWithRetry(endpoint, options, job, label) {
+  try {
+    return { data: await callMeta(endpoint, options), retried: false };
+  } catch (err) {
+    if (!isTransientMetaError(err)) throw err;
+    pushLog(job, 'warn', `${label}: lỗi tạm thời (${err.message}) — chờ 5s thử lại.`);
+    await sleep(5000);
+    return { data: await callMeta(endpoint, options), retried: true };
+  }
+}
+
+async function runBuildStructure(plan, job) {
+  const L = SAFETY_LIMITS;
+  const cleanAccId = String(plan.accountId).replace(/^act_/, '');
+  await ensurePageTokens();
+
+  // ---------- PHA 1: CHIẾN DỊCH ----------
+  job.phase = 'campaigns';
+  const campaignIdByKey = new Map();
+  const campaignNameById = new Map();
+
+  for (const spec of plan.campaigns || []) {
+    const row = { key: String(spec.key), name: spec.name, id: null, success: false, error: null };
+    try {
+      const body = buildCampaignBody({
+        name: spec.name,
+        objective: spec.objective || 'OUTCOME_ENGAGEMENT',
+        dailyBudget: spec.dailyBudget
+      });
+      const { data } = await callMetaWithRetry(
+        `act_${cleanAccId}/campaigns`, { method: 'POST', body }, job, `Chiến dịch "${spec.name}"`
+      );
+      row.id = data.id;
+      row.success = true;
+      campaignIdByKey.set(row.key, data.id);
+      campaignNameById.set(data.id, spec.name);
+      pushLog(job, 'success', `Đã tạo chiến dịch "${spec.name}" → ${data.id} (PAUSED)`);
+    } catch (err) {
+      row.error = err.message;
+      pushLog(job, 'error', `Lỗi tạo chiến dịch "${spec.name}": ${err.message}`);
+    }
+    job.created.campaigns.push(row);
+    job.done++;
+    await sleep(L.DELAY_BUILD_CAMPAIGN_MS || 2500);
+  }
+
+  // ---------- PHA 2: NHÓM QUẢNG CÁO ----------
+  job.phase = 'adsets';
+  const createdTargets = [];
+
+  for (const att of plan.attachments || []) {
+    const spec = att.adsetSpec;
+    const ref = att.campaignRef;
+
+    let campaignId = null;
+    if (ref.kind === 'new') {
+      campaignId = campaignIdByKey.get(ref.key) || null;
+      if (!campaignId) {
+        const row = { key: spec.key, name: spec.name, campaignId: null, id: null,
+                      success: false, skipped: true,
+                      error: `Bỏ qua: chiến dịch "${ref.name}" tạo không thành công.` };
+        job.created.adsets.push(row);
+        job.done++;
+        pushLog(job, 'warn', row.error);
+        continue;
+      }
+    } else {
+      campaignId = ref.id;
+      if (!campaignNameById.has(campaignId)) campaignNameById.set(campaignId, ref.name);
+    }
+
+    const row = { key: spec.key, name: spec.name, campaignId, id: null,
+                  success: false, skipped: false, error: null };
+    try {
+      const body = buildAdsetBody({
+        campaignId,
+        name: spec.name,
+        pageId: spec.pageId,
+        dailyBudget: spec.dailyBudget,
+        targeting: spec.targeting || {},
+        optimizationGoal: spec.optimizationGoal || 'CONVERSATIONS',
+        destinationType: spec.destinationType || '',
+        useCampaignBudget: att.useCampaignBudget
+      });
+      const { data } = await callMetaWithRetry(
+        `act_${cleanAccId}/adsets`, { method: 'POST', body }, job, `Nhóm "${spec.name}"`
+      );
+      row.id = data.id;
+      row.success = true;
+      createdTargets.push({
+        campaignId,
+        campaignName: campaignNameById.get(campaignId) || '',
+        adsetId: data.id,
+        adsetName: spec.name,
+        pageId: spec.pageId
+      });
+      pushLog(job, 'success', `Đã tạo nhóm "${spec.name}" trong CĐ ${campaignId} → ${data.id} (PAUSED)`);
+    } catch (err) {
+      row.error = err.message;
+      pushLog(job, 'error', `Lỗi tạo nhóm "${spec.name}": ${err.message}`);
+    }
+    job.created.adsets.push(row);
+    job.done++;
+    await sleep(L.DELAY_BUILD_ADSET_MS || 2500);
+  }
+
+  // ---------- PHA 3: QUẢNG CÁO ----------
+  job.phase = 'ads';
+  const targets = [...createdTargets, ...(plan.existingTargets || [])];
+
+  if (targets.length === 0) {
+    pushLog(job, 'error', 'Không còn nhóm đích nào khả dụng — không tạo được quảng cáo.');
+    job.summary = buildSummary(job);
+    return;
+  }
+
+  let pairs;
+  try {
+    pairs = expandPairs({
+      targets, contents: plan.contents,
+      pairingMode: plan.pairingMode, excluded: plan.excludedPairs
+    });
+  } catch (err) {
+    pushLog(job, 'error', `Không ghép được ma trận: ${err.message}`);
+    job.summary = buildSummary(job);
+    return;
+  }
+
+  pairs.sort((a, b) => {
+    const ka = `${a.target.pageId || ''}|${a.content.key}`;
+    const kb = `${b.target.pageId || ''}|${b.content.key}`;
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+
+  const creativeCache = new Map();
+  const creativeFailed = new Map();
+
+  let adIndex = 0;
+  for (const pair of pairs) {
+    adIndex++;
+    const { content, target } = pair;
+    let pageId;
+    try {
+      pageId = resolvePageIdForTarget(target, content.pageId || '');
+    } catch (err) {
+      job.created.ads.push({ ...baseAdRow(pair, target, content), success: false, skipped: true, error: err.message });
+      job.done++;
+      pushLog(job, 'error', err.message);
+      continue;
+    }
+
+    const ck = `${pageId}|${content.key}`;
+
+    if (creativeFailed.has(ck)) {
+      job.created.ads.push({ ...baseAdRow(pair, target, content), success: false, skipped: true,
+                             error: `Bỏ qua: creative lỗi (${creativeFailed.get(ck)})` });
+      job.done++;
+      continue;
+    }
+
+    if (!creativeCache.has(ck)) {
+      try {
+        const body = buildAdCreativeBody({ pageId, content });
+        const { data } = await callMetaWithRetry(
+          `act_${cleanAccId}/adcreatives`, { method: 'POST', body }, job, `Creative "${content.name || content.key}"`
+        );
+        creativeCache.set(ck, data.id);
+        pushLog(job, 'success', `Đã tạo creative "${content.name || content.key}" (page ${pageId}) → ${data.id}`);
+      } catch (err) {
+        creativeFailed.set(ck, err.message);
+        job.created.ads.push({ ...baseAdRow(pair, target, content), success: false, skipped: true,
+                               error: `Lỗi creative: ${err.message}` });
+        job.done++;
+        pushLog(job, 'error', `Lỗi tạo creative "${content.name || content.key}": ${err.message}`);
+        continue;
+      }
+      await sleep(L.DELAY_BUILD_CREATIVE_MS || 1200);
+    }
+
+    const creativeId = creativeCache.get(ck);
+    const adName = renderAdName(plan.namePattern, {
+      contentName: content.name,
+      adsetName: target.adsetName,
+      campaignName: target.campaignName,
+      index: adIndex
+    });
+
+    const row = { ...baseAdRow(pair, target, content), adName, creativeId, success: false, skipped: false, error: null, retried: false };
+    try {
+      const { data, retried } = await callMetaWithRetry(
+        `act_${cleanAccId}/ads`,
+        { method: 'POST', body: buildAdBody({ name: adName, adsetId: target.adsetId, creativeId }) },
+        job, `Quảng cáo "${adName}"`
+      );
+      row.adId = data.id;
+      row.success = true;
+      row.retried = retried;
+      pushLog(job, 'success', `[${adIndex}/${pairs.length}] Đã tạo "${adName}" → ${data.id} (PAUSED)`);
+    } catch (err) {
+      row.error = err.message;
+      pushLog(job, 'error', `[${adIndex}/${pairs.length}] Lỗi tạo "${adName}": ${err.message}`);
+    }
+    job.created.ads.push(row);
+    job.done++;
+    await sleep(L.DELAY_BUILD_AD_MS || 2000);
+  }
+
+  job.summary = buildSummary(job);
+  pushLog(job, 'success',
+    `HOÀN TẤT: ${job.summary.campaignsCreated} chiến dịch · ${job.summary.adsetsCreated} nhóm · ` +
+    `${job.summary.adsCreated} quảng cáo (tất cả PAUSED). Thất bại: ${job.summary.failed}.`);
+}
+
+function baseAdRow(pair, target, content) {
+  return {
+    pairKey: pair.pairKey,
+    campaignId: target.campaignId,
+    campaignName: target.campaignName,
+    adsetId: target.adsetId,
+    adsetName: target.adsetName,
+    contentKey: content.key,
+    contentName: content.name || content.key,
+    adId: null, creativeId: null, adName: ''
+  };
+}
+
+function buildSummary(job) {
+  const c = job.created || { campaigns: [], adsets: [], ads: [] };
+  const adsOk = c.ads.filter(a => a.success).length;
+  const byCampaign = {};
+  for (const a of c.ads) {
+    const k = a.campaignName || a.campaignId || '(không rõ)';
+    byCampaign[k] = byCampaign[k] || { success: 0, failed: 0 };
+    a.success ? byCampaign[k].success++ : byCampaign[k].failed++;
+  }
+  return {
+    campaignsCreated: c.campaigns.filter(x => x.success).length,
+    adsetsCreated:    c.adsets.filter(x => x.success).length,
+    adsCreated:       adsOk,
+    failed: c.campaigns.filter(x => !x.success).length
+          + c.adsets.filter(x => !x.success).length
+          + c.ads.filter(x => !x.success).length,
+    creativesCreated: new Set(c.ads.filter(a => a.creativeId).map(a => a.creativeId)).size,
+    byCampaign
+  };
+}
+
+/**
+ * GET /api/cp/job/:jobId/csv
+ * Xuất kết quả đợt chạy UTF-8 BOM.
+ */
+crossPostRouter.get('/job/:jobId/csv', (req, res) => {
+  const job = jobs.get(req.params.jobId);
+  if (!job) return res.status(404).type('text/plain').send('Không tìm thấy tiến trình (có thể đã hết hạn).');
+
+  const esc = (v) => {
+    const s = String(v ?? '');
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [];
+
+  lines.push('# CHIEN DICH DA TAO');
+  lines.push(['Ten', 'Campaign ID', 'Ket qua', 'Loi'].join(','));
+  for (const r of job.created?.campaigns || []) {
+    lines.push([r.name, r.id || '', r.success ? 'Thanh cong' : 'Loi', r.error || ''].map(esc).join(','));
+  }
+
+  lines.push('');
+  lines.push('# NHOM QUANG CAO DA TAO');
+  lines.push(['Ten', 'Adset ID', 'Campaign ID', 'Ket qua', 'Loi'].join(','));
+  for (const r of job.created?.adsets || []) {
+    lines.push([r.name, r.id || '', r.campaignId || '', r.success ? 'Thanh cong' : (r.skipped ? 'Bo qua' : 'Loi'), r.error || ''].map(esc).join(','));
+  }
+
+  lines.push('');
+  lines.push('# QUANG CAO DA TAO');
+  lines.push(['Chien dich', 'Campaign ID', 'Nhom QC', 'Adset ID', 'Noi dung', 'Ten Ad', 'Ad ID', 'Creative ID', 'Ket qua', 'Loi'].join(','));
+  for (const r of job.created?.ads || []) {
+    lines.push([
+      r.campaignName, r.campaignId, r.adsetName, r.adsetId, r.contentName,
+      r.adName, r.adId || '', r.creativeId || '',
+      r.success ? 'Thanh cong' : (r.skipped ? 'Bo qua' : 'Loi'), r.error || ''
+    ].map(esc).join(','));
+  }
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="ket-qua-${req.params.jobId.slice(0, 8)}.csv"`);
+  res.send('\uFEFF' + lines.join('\r\n'));
+});
+
 
