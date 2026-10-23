@@ -59,8 +59,133 @@ export const SAFETY_LIMITS = {
   ANALYZE_CAMPAIGNS_MAX: 20,
   DELAY_PUBLISH_MS:      1500,
   DELAY_CREATE_MS:       2000,
-  DELAY_TARGET_MS:       2500
+  DELAY_TARGET_MS:       2500,
+
+  // ---------------------------------------------------------------
+  // Engine build-structure (tab 2 "tạo mới hàng loạt" + tab 3 "đăng
+  // vào CĐ/nhóm có sẵn"). Chốt với chủ dự án 23/10/2026:
+  //   • 1 tài khoản quảng cáo / 1 đợt
+  //   • tối đa 15 chiến dịch, 3 nhóm mỗi chiến dịch
+  // Trần 195 đối tượng ≈ 7 phút chạy — đừng nâng mà không đo lại thời gian.
+  // ---------------------------------------------------------------
+  BUILD_MAX_NEW_CAMPAIGNS:       15,
+  BUILD_MAX_ADSETS_PER_CAMPAIGN: 3,
+  BUILD_MAX_NEW_ADSETS:          45,   // 15 × 3
+  BUILD_MAX_TARGETS:             45,   // tổng nhóm đích (mới + có sẵn)
+  BUILD_MAX_CONTENTS:            12,
+  BUILD_MAX_ADS:                 135,  // 45 nhóm × 3 nội dung — TRẦN CỨNG
+  BUILD_MAX_OBJECTS:             195,  // CĐ + nhóm + ad
+
+  DELAY_BUILD_CAMPAIGN_MS:  2500,
+  DELAY_BUILD_ADSET_MS:     2500,
+  DELAY_BUILD_CREATIVE_MS:  1200,
+  DELAY_BUILD_AD_MS:        2000,
+
+  UPLOAD_IMAGE_MAX_BYTES: 8 * 1024 * 1024
 };
+
+/**
+ * Suy ra cờ "bản nháp" cho 1 chiến dịch.
+ *
+ * Marketing API KHÔNG có status DRAFT — effective_status chỉ có
+ * ACTIVE | PAUSED | DELETED | ARCHIVED | IN_PROCESS | WITH_ISSUES
+ * (xem docs Campaign Reference v21.0). Nên "nháp" được định nghĩa theo
+ * nghiệp vụ: chiến dịch tồn tại nhưng CHƯA có quảng cáo nào, hoặc đang
+ * IN_PROCESS / WITH_ISSUES. Đây đúng là tập hợp mà Ads Manager gắn nhãn "Draft".
+ *
+ * Bản nháp còn nằm trong TRÌNH TẠO của Ads Manager (chưa sinh object) thì
+ * không có endpoint nào đọc được — không cố đoán, trả isDraft:false.
+ */
+export function classifyCampaignDraft(c = {}) {
+  const adsCount    = c.ads?.summary?.total_count ?? null;
+  const adsetsCount = c.adsets?.summary?.total_count ?? null;
+  const es = c.effective_status;
+
+  if (es === 'IN_PROCESS')  return { isDraft: true,  reason: 'in_process' };
+  if (es === 'WITH_ISSUES') return { isDraft: true,  reason: 'with_issues' };
+  if (adsCount === 0)       return { isDraft: true,  reason: adsetsCount === 0 ? 'no_adset' : 'no_ad' };
+  return { isDraft: false, reason: null };
+}
+
+/** Các trạng thái được phép truyền vào query ?statuses= */
+const CAMPAIGN_STATUS_WHITELIST = new Set([
+  'ACTIVE', 'PAUSED', 'IN_PROCESS', 'WITH_ISSUES', 'ARCHIVED'
+]);
+
+/**
+ * Chuẩn hoá query của route campaigns. Giữ TƯƠNG THÍCH NGƯỢC:
+ * không truyền gì → đúng hành vi cũ ['ACTIVE','PAUSED'], tab 2 không bị ảnh hưởng.
+ */
+export function parseCampaignQuery(q = {}) {
+  let statuses;
+  if (!q.statuses) {
+    statuses = ['ACTIVE', 'PAUSED'];
+  } else if (String(q.statuses).toLowerCase() === 'all') {
+    statuses = ['ACTIVE', 'PAUSED', 'IN_PROCESS', 'WITH_ISSUES'];
+  } else {
+    statuses = String(q.statuses).split(',')
+      .map(s => s.trim().toUpperCase())
+      .filter(s => CAMPAIGN_STATUS_WHITELIST.has(s));
+    if (statuses.length === 0) statuses = ['ACTIVE', 'PAUSED'];
+  }
+  if (String(q.includeArchived) === '1' && !statuses.includes('ARCHIVED')) {
+    statuses.push('ARCHIVED');
+  }
+
+  const rawLimit = Number(q.limit);
+  const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 200) : 50;
+
+  return { statuses, limit, withDraftFlag: String(q.withDraftFlag) === '1' };
+}
+
+/** Meta campaign object → shape client dùng. Không bịa trường nào không có thật. */
+export function normalizeCampaign(c = {}) {
+  const { isDraft, reason } = classifyCampaignDraft(c);
+  const daily = Number(c.daily_budget || 0);
+  return {
+    id: c.id,
+    name: c.name || '(không tên)',
+    objective: c.objective || '',
+    status: c.status || '',
+    effective_status: c.effective_status || '',
+    dailyBudget: daily,
+    lifetimeBudget: Number(c.lifetime_budget || 0),
+    hasCbo: daily > 0 || Number(c.lifetime_budget || 0) > 0,
+    adsetsCount: c.adsets?.summary?.total_count ?? null,
+    adsCount:    c.ads?.summary?.total_count ?? null,
+    isDraft,
+    draftReason: reason,
+    createdTime: c.created_time || null
+  };
+}
+
+/** Meta adset object → shape client dùng, kèm pageId đã suy ra sẵn. */
+export function normalizeAdset(a = {}) {
+  return {
+    id: a.id,
+    name: a.name || '(không tên)',
+    campaignId: a.campaign_id || '',
+    status: a.status || '',
+    effective_status: a.effective_status || '',
+    dailyBudget: Number(a.daily_budget || 0),
+    optimizationGoal: a.optimization_goal || '',
+    destinationType: a.destination_type || '',
+    pageId: a.promoted_object?.page_id || ''
+  };
+}
+
+/**
+ * Ưu tiên page của CHÍNH nhóm đích (promoted_object.page_id).
+ * Creative gắn page khác page nhóm đích là nguồn lỗi "page mismatch" khó đoán.
+ */
+export function resolvePageIdForTarget(adset = {}, fallbackPageId = '') {
+  const pid = adset.pageId || adset.promoted_object?.page_id || fallbackPageId;
+  if (!pid) {
+    throw new Error(`Nhóm "${adset.name || adset.id}" không xác định được Fanpage đích.`);
+  }
+  return String(pid);
+}
+
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '..', 'data');
@@ -548,25 +673,112 @@ crossPostRouter.post('/publish', withLock('publish'), async (req, res) => {
 
 /**
  * GET /api/cp/ad-accounts/:accountId/campaigns
- * Danh sách chiến dịch của 1 tài khoản
+ * Danh sách chiến dịch của 1 tài khoản.
+ *
+ * Query (tất cả TUỲ CHỌN — không truyền gì thì hành vi y như trước 23/10/2026):
+ *   statuses=ACTIVE,PAUSED | all     (all = + IN_PROCESS, WITH_ISSUES → lấy được CĐ nháp)
+ *   includeArchived=1
+ *   withDraftFlag=1                  (đếm adset/ad bằng summary để suy ra cờ nháp)
+ *   limit=1..200
  */
 crossPostRouter.get('/ad-accounts/:accountId/campaigns', async (req, res) => {
-  const { accountId } = req.params;
-  const cleanId = accountId.replace(/^act_/, '');
+  const cleanId = req.params.accountId.replace(/^act_/, '');
+  const { statuses, limit, withDraftFlag } = parseCampaignQuery(req.query);
+
+  const fields = [
+    'id', 'name', 'objective', 'status', 'effective_status',
+    'created_time', 'daily_budget', 'lifetime_budget'
+  ];
+  // Field expansion + summary: đếm adset/ad ngay trong 1 request, thay vì
+  // bắn thêm 1 request cho MỖI chiến dịch (18 CĐ = 18 request → 1 request).
+  if (withDraftFlag) {
+    fields.push('adsets.limit(0).summary(total_count)');
+    fields.push('ads.limit(0).summary(total_count)');
+  }
 
   try {
     const result = await callMeta(`/act_${cleanId}/campaigns`, {
       params: {
-        fields: 'id,name,objective,status,effective_status',
-        effective_status: "['ACTIVE','PAUSED']",
-        limit: 50
+        fields: fields.join(','),
+        effective_status: JSON.stringify(statuses).replace(/"/g, "'"),
+        limit
       }
     });
 
-    res.json({ ok: true, campaigns: result.data || [] });
+    const campaigns = (result.data || []).map(normalizeCampaign);
+    const counts = {
+      total:  campaigns.length,
+      draft:  campaigns.filter(c => c.isDraft).length,
+      active: campaigns.filter(c => c.effective_status === 'ACTIVE').length,
+      paused: campaigns.filter(c => c.effective_status === 'PAUSED').length
+    };
+
+    res.json({
+      ok: true,
+      campaigns,
+      counts,
+      notice: withDraftFlag
+        ? 'Chỉ nạp được chiến dịch nháp đã tồn tại trên Meta. Bản nháp còn nằm trong trình tạo Ads Manager thì API không đọc được.'
+        : undefined
+    });
   } catch (err) {
     console.error(`[CrossPost] Lỗi lấy chiến dịch act_${cleanId}:`, err.message);
     res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/cp/ad-accounts/:accountId/adsets?campaignIds=120x,120y
+ * Lấy nhóm quảng cáo của NHIỀU chiến dịch bằng 1 request (filtering campaign.id IN).
+ *
+ * Route /campaigns/:campaignId/adsets vẫn giữ nguyên cho tab 2 — không xoá.
+ */
+crossPostRouter.get('/ad-accounts/:accountId/adsets', async (req, res) => {
+  const cleanId = req.params.accountId.replace(/^act_/, '');
+  const campaignIds = String(req.query.campaignIds || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+
+  if (campaignIds.length === 0) {
+    return res.status(400).json({ ok: false, error: 'Thiếu campaignIds.' });
+  }
+  if (campaignIds.length > 50) {
+    return res.status(400).json({ ok: false, error: 'Tối đa 50 chiến dịch mỗi lần (giới hạn filtering IN của Meta).' });
+  }
+
+  const fields = 'id,name,campaign_id,status,effective_status,daily_budget,' +
+                 'optimization_goal,billing_event,destination_type,' +
+                 'promoted_object{page_id,application_id}';
+
+  try {
+    const result = await callMeta(`/act_${cleanId}/adsets`, {
+      params: {
+        fields,
+        filtering: JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: campaignIds }]),
+        limit: 200
+      }
+    });
+    return res.json({ ok: true, adsets: (result.data || []).map(normalizeAdset), fallback: false });
+  } catch (err) {
+    // Một số loại tài khoản từ chối filtering campaign.id IN → gọi từng chiến dịch.
+    // Phải ghi log rõ là đã fallback (rule §4: nói rõ giới hạn dữ liệu).
+    console.warn(`[CrossPost] filtering IN thất bại trên act_${cleanId} (${err.message}) → fallback gọi từng chiến dịch.`);
+    try {
+      const all = [];
+      const CONCURRENCY = 4;
+      for (let i = 0; i < campaignIds.length; i += CONCURRENCY) {
+        const chunk = campaignIds.slice(i, i + CONCURRENCY);
+        const parts = await Promise.all(chunk.map(cid =>
+          callMeta(`/${cid}/adsets`, { params: { fields, limit: 100 } })
+            .then(r => r.data || [])
+            .catch(e => { console.error(`[CrossPost] Lỗi adsets CĐ ${cid}: ${e.message}`); return []; })
+        ));
+        parts.forEach(p => all.push(...p));
+      }
+      return res.json({ ok: true, adsets: all.map(normalizeAdset), fallback: true });
+    } catch (err2) {
+      console.error(`[CrossPost] Lỗi lấy adsets act_${cleanId}:`, err2.message);
+      return res.status(500).json({ ok: false, error: err2.message });
+    }
   }
 });
 
