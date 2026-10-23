@@ -477,6 +477,11 @@ window.BulkAds = (function () {
       });
     }
 
+    if (targetStep === 3) {
+      initStep3Events();
+      renderMatrix();
+    }
+
     const backBtn = document.getElementById('bulkBackBtn');
     const nextBtn = document.getElementById('bulkNextBtn');
     const execBtn = document.getElementById('bulkExecuteBtn');
@@ -487,6 +492,327 @@ window.BulkAds = (function () {
 
     S.refreshIcons();
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // ------------------------------------------------------------------
+  // BƯỚC 3 — Ma trận ghép nội dung × nhóm đích
+  // ------------------------------------------------------------------
+  let step3EventsBound = false;
+
+  function initStep3Events() {
+    if (step3EventsBound) return;
+    step3EventsBound = true;
+
+    const modeSel = document.getElementById('bulkPairingMode');
+    modeSel?.addEventListener('change', (e) => {
+      st.pairingMode = e.target.value;
+      st.excludedPairs.clear();
+      renderMatrix();
+    });
+
+    const patIn = document.getElementById('bulkNamePattern');
+    patIn?.addEventListener('input', (e) => {
+      st.namePattern = e.target.value;
+      updateNamePreview();
+    });
+  }
+
+  /**
+   * Sinh danh sách cặp theo chế độ ghép.
+   * Logic PHẢI khớp expandPairs() ở backend.
+   */
+  function buildPairs() {
+    const targets = Array.from(st.selectedAdsets.values());
+    const contents = st.contents || [];
+    const mode = st.pairingMode || 'matrix';
+    const out = [];
+
+    if (targets.length === 0) {
+      return { error: 'Chưa có nhóm quảng cáo đích nào được chọn ở Bước 1.', pairs: [] };
+    }
+    if (contents.length === 0) {
+      return { error: 'Chưa có nội dung quảng cáo nào được soạn ở Bước 2.', pairs: [] };
+    }
+
+    if (mode === 'matrix') {
+      for (const c of contents) {
+        for (const t of targets) {
+          out.push({ content: c, target: t });
+        }
+      }
+    } else if (mode === 'one_to_one') {
+      if (contents.length !== targets.length) {
+        return {
+          error: `Chế độ 1-1 cần số nội dung bằng số nhóm đích (${contents.length} nội dung ≠ ${targets.length} nhóm).`,
+          pairs: []
+        };
+      }
+      for (let i = 0; i < contents.length; i++) {
+        out.push({ content: contents[i], target: targets[i] });
+      }
+    } else if (mode === 'round_robin') {
+      const n = Math.max(contents.length, targets.length);
+      for (let i = 0; i < n; i++) {
+        out.push({
+          content: contents[i % contents.length],
+          target: targets[i % targets.length]
+        });
+      }
+    } else {
+      return { error: `Chế độ ghép không hợp lệ: "${mode}".`, pairs: [] };
+    }
+
+    const pairs = out
+      .filter(p => !st.excludedPairs.has(`${p.content.key}|${p.target.adsetId}`))
+      .map((p, i) => ({
+        ...p,
+        index: i + 1,
+        pairKey: `${p.content.key}|${p.target.adsetId}`
+      }));
+
+    return { error: null, pairs };
+  }
+
+  function estimateSeconds(adCount, creativeCount) {
+    return Math.round((creativeCount * 1200 + adCount * 2000) / 1000);
+  }
+
+  function renderAdName(pattern, ctx = {}) {
+    const tokens = {
+      content: ctx.contentName || '',
+      adset: ctx.adsetName || '',
+      campaign: ctx.campaignName || '',
+      index: ctx.index != null ? String(ctx.index) : '',
+      date: ctx.date || new Date().toISOString().slice(0, 10)
+    };
+    const raw = String(pattern || '{content} — {adset}')
+      .replace(/\{(content|adset|campaign|index|date)\}/g, (_, k) => tokens[k] || '');
+    const clean = raw.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    return (clean || 'Quảng cáo').slice(0, 200);
+  }
+
+  function updateNamePreview() {
+    const prevEl = document.getElementById('bulkNamePreview');
+    if (!prevEl) return;
+    const { pairs, error } = buildPairs();
+    if (error || pairs.length === 0) {
+      prevEl.innerHTML = `<span style="color:var(--warning-text);">${S.escapeHtml(error || '(Chưa có cặp quảng cáo nào)')}</span>`;
+      return;
+    }
+    const sample = pairs.slice(0, 3).map(p => {
+      const name = renderAdName(st.namePattern, {
+        contentName: p.content.name,
+        adsetName: p.target.adsetName,
+        campaignName: p.target.campaignName,
+        index: p.index
+      });
+      return `[${p.index}] ${S.escapeHtml(name)}`;
+    });
+    prevEl.innerHTML = sample.join('<br>') + (pairs.length > 3 ? `<br><span style="color:var(--text-muted);">...và ${pairs.length - 3} quảng cáo khác</span>` : '');
+  }
+
+  function renderMatrix() {
+    const table = document.getElementById('bulkMatrixTable');
+    if (!table) return;
+
+    const targets = Array.from(st.selectedAdsets.values());
+    const contents = st.contents || [];
+    const mode = st.pairingMode || 'matrix';
+
+    if (targets.length === 0 || contents.length === 0) {
+      table.innerHTML = `<tbody><tr><td class="cp-empty-state">Chưa đủ dữ liệu (cần cả nhóm đích và nội dung).</td></tr></tbody>`;
+      updateMatrixSummary();
+      return;
+    }
+
+    if (mode === 'matrix') {
+      renderFullMatrix(table, contents, targets);
+    } else {
+      renderListPairs(table, contents, targets, mode);
+    }
+
+    updateMatrixSummary();
+    updateNamePreview();
+  }
+
+  function renderFullMatrix(table, contents, targets) {
+    let thead = `<thead class="bulk-matrix-head"><tr>
+      <th style="min-width:200px;text-align:left;">Nội dung \\ Nhóm đích</th>`;
+    targets.forEach(t => {
+      thead += `
+        <th title="${S.escapeHtml(t.campaignName)}">
+          <div style="font-size:0.82rem;font-weight:700;">${S.escapeHtml(t.adsetName)}</div>
+          <div style="font-size:0.72rem;color:var(--text-muted);">${S.escapeHtml(t.campaignName)}</div>
+        </th>`;
+    });
+    thead += `</tr></thead>`;
+
+    let tbody = `<tbody>`;
+    contents.forEach(c => {
+      tbody += `<tr>
+        <td style="padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--border-subtle);border-right:1px solid var(--border-subtle);background:var(--bg-card);">
+          <strong>${S.escapeHtml(c.name || 'QC')}</strong>
+          <div style="font-size:0.72rem;color:var(--text-muted);">${S.escapeHtml(c.ctaType || 'SEND_MESSAGE')}</div>
+        </td>`;
+      targets.forEach(t => {
+        const pairKey = `${c.key}|${t.adsetId}`;
+        const isOff = st.excludedPairs.has(pairKey);
+        tbody += `
+          <td class="bulk-matrix-cell ${isOff ? 'bulk-matrix-cell--off' : ''}" data-pair-key="${pairKey}" title="Bấm để bật/tắt quảng cáo này">
+            ${isOff ? '✕' : '✓'}
+          </td>`;
+      });
+      tbody += `</tr>`;
+    });
+    tbody += `</tbody>`;
+
+    table.innerHTML = thead + tbody;
+
+    table.querySelectorAll('.bulk-matrix-cell').forEach(cell => {
+      cell.addEventListener('click', () => {
+        const key = cell.dataset.pairKey;
+        if (st.excludedPairs.has(key)) {
+          st.excludedPairs.delete(key);
+          cell.classList.remove('bulk-matrix-cell--off');
+          cell.textContent = '✓';
+        } else {
+          st.excludedPairs.add(key);
+          cell.classList.add('bulk-matrix-cell--off');
+          cell.textContent = '✕';
+        }
+        updateMatrixSummary();
+        updateNamePreview();
+      });
+    });
+  }
+
+  function renderListPairs(table, contents, targets, mode) {
+    const { pairs, error } = buildPairs();
+    if (error) {
+      table.innerHTML = `<tbody><tr><td class="cp-empty-state cp-text-danger">${S.escapeHtml(error)}</td></tr></tbody>`;
+      return;
+    }
+
+    let html = `
+      <thead class="bulk-matrix-head">
+        <tr>
+          <th style="width:40px;">#</th>
+          <th>Nội dung</th>
+          <th>Nhóm đích &amp; Chiến dịch</th>
+          <th>Tên Ad dự kiến</th>
+          <th style="width:70px;">Bật/Tắt</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+    pairs.forEach(p => {
+      const isOff = st.excludedPairs.has(p.pairKey);
+      const adName = renderAdName(st.namePattern, {
+        contentName: p.content.name,
+        adsetName: p.target.adsetName,
+        campaignName: p.target.campaignName,
+        index: p.index
+      });
+      html += `
+        <tr>
+          <td style="text-align:center;color:var(--text-muted);">${p.index}</td>
+          <td><strong>${S.escapeHtml(p.content.name)}</strong></td>
+          <td>
+            <div>${S.escapeHtml(p.target.adsetName)}</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);">${S.escapeHtml(p.target.campaignName)}</div>
+          </td>
+          <td style="font-family:monospace;font-size:0.8rem;">${S.escapeHtml(adName)}</td>
+          <td class="bulk-matrix-cell ${isOff ? 'bulk-matrix-cell--off' : ''}" data-pair-key="${p.pairKey}" style="text-align:center;">
+            ${isOff ? '✕' : '✓'}
+          </td>
+        </tr>`;
+    });
+    html += `</tbody>`;
+    table.innerHTML = html;
+
+    table.querySelectorAll('.bulk-matrix-cell').forEach(cell => {
+      cell.addEventListener('click', () => {
+        const key = cell.dataset.pairKey;
+        if (st.excludedPairs.has(key)) {
+          st.excludedPairs.delete(key);
+          cell.classList.remove('bulk-matrix-cell--off');
+          cell.textContent = '✓';
+        } else {
+          st.excludedPairs.add(key);
+          cell.classList.add('bulk-matrix-cell--off');
+          cell.textContent = '✕';
+        }
+        updateMatrixSummary();
+        updateNamePreview();
+      });
+    });
+  }
+
+  function updateMatrixSummary() {
+    const sumEl = document.getElementById('bulkMatrixSummary');
+    const badgeEl = document.getElementById('bulkMatrixBadge');
+    const warnEl = document.getElementById('bulkMatrixWarn');
+    const nextBtn = document.getElementById('bulkNextBtn');
+    if (!sumEl) return;
+
+    const { pairs, error } = buildPairs();
+    const adCount = pairs.length;
+    const creativeCount = new Set(pairs.map(p => `${p.target.pageId || 'p'}|${p.content.key}`)).size;
+    const etaSec = estimateSeconds(adCount, creativeCount);
+    const etaMin = (etaSec / 60).toFixed(1);
+
+    if (badgeEl) badgeEl.textContent = `${adCount} quảng cáo`;
+
+    sumEl.innerHTML = `Sẽ tạo <strong>${adCount}</strong> quảng cáo · ` +
+      `<strong>${creativeCount}</strong> creative mới · ước tính ≈ <strong>${etaSec >= 60 ? `${etaMin} phút` : `${etaSec} giây`}</strong>`;
+
+    const warnings = [];
+
+    if (error) {
+      warnings.push(`<div class="cp-empty-state cp-text-danger">${S.escapeHtml(error)}</div>`);
+    }
+
+    if (adCount === 0) {
+      warnings.push('<div class="bulk-notice-draft cp-text-danger"><i data-lucide="alert-triangle"></i><span>Chưa có cặp quảng cáo nào được chọn.</span></div>');
+    }
+
+    if (adCount > LIMITS.MAX_ADS) {
+      warnings.push(
+        `<div class="bulk-notice-draft cp-text-danger"><i data-lucide="alert-triangle"></i>` +
+        `<span><strong>Vượt trần an toàn:</strong> Đang chọn ${adCount} quảng cáo — tối đa ${LIMITS.MAX_ADS}. Hãy loại trừ bớt ô hoặc giảm nội dung/nhóm đích.</span></div>`
+      );
+    }
+
+    if (etaSec > 300) {
+      warnings.push(
+        `<div class="bulk-notice-draft" style="border-color:var(--warning);background:rgba(245, 158, 11, 0.1);"><i data-lucide="clock" style="color:var(--warning-text);"></i>` +
+        `<span>Ước tính đợt chạy mất hơn <strong>${etaMin} phút</strong>. Đừng tắt trình duyệt hoặc tắt server trong lúc thực thi.</span></div>`
+      );
+    }
+
+    // Kiểm tra nhóm thiếu Fanpage
+    const missingPageAdsets = Array.from(st.selectedAdsets.values()).filter(t => !t.pageId);
+    if (missingPageAdsets.length > 0) {
+      warnings.push(
+        `<div class="bulk-notice-draft"><i data-lucide="info"></i>` +
+        `<span>Có <strong>${missingPageAdsets.length}</strong> nhóm chưa rõ Fanpage — hệ thống sẽ tự động dùng Fanpage đầu tiên của tài khoản.</span></div>`
+      );
+    }
+
+    if (warnEl) {
+      if (warnings.length > 0) {
+        warnEl.innerHTML = warnings.join('');
+        warnEl.style.display = 'block';
+        S.refreshIcons();
+      } else {
+        warnEl.innerHTML = '';
+        warnEl.style.display = 'none';
+      }
+    }
+
+    if (nextBtn && st.step === 3) {
+      nextBtn.disabled = Boolean(error || adCount === 0 || adCount > LIMITS.MAX_ADS);
+    }
   }
 
   return {

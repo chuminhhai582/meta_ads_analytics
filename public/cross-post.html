@@ -733,7 +733,66 @@
       <div class="cp-editor-box" id="bulkContentContainer"></div>
     </div>
   </div>
-  <div id="bulkStep3" class="studio-step-container" style="display:none;"></div>
+  <!-- ---------------- BƯỚC 3 ---------------- -->
+  <div id="bulkStep3" class="studio-step-container" style="display:none;">
+    <div class="cp-card">
+      <div class="cp-card-header">
+        <h2 class="cp-card-title">
+          <span class="step-num">3</span>
+          <span>Ma trận ghép Nội dung × Nhóm đích &amp; Kiểm tra</span>
+        </h2>
+        <span class="badge" id="bulkMatrixBadge">0 quảng cáo</span>
+      </div>
+
+      <div class="cp-editor-box">
+        <!-- Pairing Controls -->
+        <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:var(--space-4);margin-bottom:var(--space-4);">
+          <div class="cp-form-group">
+            <label for="bulkPairingMode" class="cp-form-label">Chế độ ghép quảng cáo</label>
+            <select id="bulkPairingMode" class="select-filter cp-w-full">
+              <option value="matrix">Ma trận (Nội dung × Nhóm đích) - Mặc định</option>
+              <option value="one_to_one">Ghép 1 - 1 (Nội dung thứ i vào Nhóm thứ i)</option>
+              <option value="round_robin">Quay vòng (Round Robin)</option>
+            </select>
+          </div>
+
+          <div class="cp-form-group">
+            <label for="bulkNamePattern" class="cp-form-label">
+              Mẫu đặt tên Quảng cáo <span class="cp-label-hint">({content}, {adset}, {campaign}, {index}, {date})</span>
+            </label>
+            <input type="text" id="bulkNamePattern" class="cp-input" value="{content} — {adset}" placeholder="{content} — {adset}">
+          </div>
+        </div>
+
+        <!-- Name Preview -->
+        <div class="bulk-notice-draft" style="margin-bottom:var(--space-4);">
+          <i data-lucide="eye"></i>
+          <div>
+            <strong>Xem trước tên quảng cáo (mẫu 3 ads đầu tiên):</strong>
+            <div id="bulkNamePreview" style="margin-top:4px;font-family:monospace;font-size:0.82rem;color:var(--text-secondary);">
+              (Chưa có cặp quảng cáo nào)
+            </div>
+          </div>
+        </div>
+
+        <!-- Matrix Table Wrap -->
+        <div class="bulk-matrix-wrap">
+          <table class="bulk-matrix-table" id="bulkMatrixTable">
+            <!-- Render dynamically -->
+          </table>
+        </div>
+
+        <!-- Warnings & Summary -->
+        <div id="bulkMatrixWarn" style="margin-top:var(--space-3);display:none;"></div>
+
+        <div class="bulk-count-line" style="margin-top:var(--space-4);">
+          <div id="bulkMatrixSummary">
+            Sẽ tạo <strong>0</strong> quảng cáo · <strong>0</strong> creative mới · ước tính ≈ <strong>0 giây</strong>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
   <div id="bulkStep4" class="studio-step-container" style="display:none;"></div>
 
       <footer class="studio-nav-bar">
