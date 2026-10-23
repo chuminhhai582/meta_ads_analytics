@@ -4,7 +4,7 @@
 > Đọc file này TRƯỚC khi sửa bất kỳ dòng code nào. Quy tắc làm việc bắt buộc nằm ở
 > [`.agents/rules/quy-tac-du-an.md`](./.agents/rules/quy-tac-du-an.md).
 >
-> Cập nhật lần cuối: 2026-10-22
+> Cập nhật lần cuối: 2026-10-23
 
 ---
 
@@ -421,3 +421,5 @@ Báo cáo đầy đủ kèm số đo kiểm chứng: [`BAO_CAO_RA_SOAT_2026-10-1
 | 2026-10-21 | **Nâng cấp Ads Creation Studio 4 bước (Đã duyệt)**: (1) Bổ sung quy trình tạo chiến dịch, tạo nhóm quảng cáo kèm targeting (tuổi, giới tính, khu vực địa lý, placements) và tạo hàng loạt quảng cáo; (2) Hỗ trợ 3 cách chuẩn bị nội dung: Multi-post Fanpage, Nhập danh sách nội dung (Custom Cards), và Nhân bản Ads mẫu; (3) Xem trước Ma trận quảng cáo động (Matrix Preview); (4) Khắc phục triệt để lỗi Standard Enhancements / copies deprecated của Meta bằng cách khởi tạo trực tiếp Creative sạch qua `POST act_{id}/adcreatives` và `POST act_{id}/ads`; (5) Giữ an toàn tuyệt đối với trạng thái PAUSED mặc định và giãn cách 1.5s - 2s chống spam API. |
 | 2026-10-22 | **Rà soát & tối ưu toàn diện 28 hạng mục (Đợt 1–4, 64/64 tests PASS - Đã duyệt)**: (1) Sửa layout footer, định nghĩa 7 biến CSS thiếu, liên kết export theo bộ lọc, chặn CSRF cho API ghi; (2) Lọc chiến dịch rỗng khỏi payload (−89%), nén gzip bằng zlib native (−94%), bảo toàn 100% bất biến KPI; (3) Bổ sung 15 automated tests (tổng 64 tests), chốt cờ debounce & chốt chống chạy trùng, cập nhật Chart tại chỗ, a11y bàn phím & modal; (4) Bật/tắt nhóm cột bảng, Job model nhân bản hàng loạt chống timeout, chuẩn hoá snapshot v4 vs view v5, đọc RAM trực tiếp, compact cache, ghim CDN + static cache headers, nâng tương phản WCAG AA, prefers-reduced-motion + print style. |
 | 2026-10-22 | **Lưu trữ & dọn dẹp tài liệu hoàn thành (Đã duyệt)**: Chuyển các báo cáo rà soát và hướng dẫn đã hoàn thành (BAO_CAO_RA_SOAT_2026-10-16.md, HUONG_DAN_FIX_2026-10-22.md, HUONG_DAN_LAY_TOKEN_TU_N8N.md) vào thư mục docs/archive/ giúp thư mục gốc gọn gàng. |
+| 2026-10-23 | **Sửa lỗi làm mới Fanpage & TK (Cross-Post Manager)**: Khắc phục lỗi `ReferenceError: sourceAccountSelect is not defined` trong `public/js/cross-post-app.js` bằng cách trỏ đúng ID `studioAccountSelect`, kiểm tra DOM element an toàn và bảo toàn lựa chọn tài khoản hiện tại. |
+

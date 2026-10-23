@@ -278,22 +278,35 @@
       state.adAccounts = data.adAccounts || [];
 
       // Render lại giao diện Fanpage nguồn
-      let optionsHtml = '<option value="">-- Chọn Fanpage nguồn để lấy bài đăng --</option>';
-      state.pages.forEach(p => {
-        optionsHtml += `<option value="${p.id}">${escapeHtml(p.name)} (${formatNum(p.fanCount)} fans)</option>`;
-      });
-      sourcePageSelect.innerHTML = optionsHtml;
-      sourcePageSelect.disabled = false;
+      if (sourcePageSelect) {
+        let optionsHtml = '<option value="">-- Chọn Fanpage nguồn để lấy bài đăng --</option>';
+        state.pages.forEach(p => {
+          optionsHtml += `<option value="${p.id}">${escapeHtml(p.name)} (${formatNum(p.fanCount)} fans)</option>`;
+        });
+        sourcePageSelect.innerHTML = optionsHtml;
+        sourcePageSelect.disabled = false;
+        if (state.selectedSourcePageId) {
+          sourcePageSelect.value = state.selectedSourcePageId;
+        }
+      }
       renderTargetPages();
 
       // Render lại giao diện Tài khoản Ads
-      if (sourceAccountSelect) {
-        let accHtml = '<option value="">-- Chọn tài khoản quảng cáo --</option>';
-        state.adAccounts.forEach(acc => {
-          accHtml += `<option value="${acc.accountId}">${escapeHtml(acc.name)} (act_${acc.accountId})</option>`;
-        });
-        sourceAccountSelect.innerHTML = accHtml;
-        sourceAccountSelect.disabled = false;
+      const studioAccountSelect = document.getElementById('studioAccountSelect');
+      if (studioAccountSelect) {
+        if (state.adAccounts.length === 0) {
+          studioAccountSelect.innerHTML = '<option value="">(Không có tài khoản quảng cáo nào)</option>';
+        } else {
+          let accHtml = '<option value="">-- Chọn tài khoản quảng cáo đích --</option>';
+          state.adAccounts.forEach(acc => {
+            accHtml += `<option value="${acc.accountId}">${escapeHtml(acc.name)} (act_${acc.accountId})</option>`;
+          });
+          studioAccountSelect.innerHTML = accHtml;
+          studioAccountSelect.disabled = false;
+          if (typeof studioState !== 'undefined' && studioState && studioState.accountId) {
+            studioAccountSelect.value = studioState.accountId;
+          }
+        }
       }
 
       if (statusEl) statusEl.textContent = 'Cache: Vừa cập nhật';
