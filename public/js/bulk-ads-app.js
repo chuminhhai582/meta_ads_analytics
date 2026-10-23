@@ -463,6 +463,20 @@ window.BulkAds = (function () {
       }
     }
 
+    if (targetStep === 2 && !st.contentEditor) {
+      st.contentEditor = S.ContentEditor.mount({
+        containerId: 'bulkContentContainer',
+        max: LIMITS.MAX_CONTENTS,
+        accountId: () => st.accountId,
+        pages: () => S.getPages(),
+        onChange: (contents) => {
+          st.contents = contents;
+          const badge = document.getElementById('bulkContentBadge');
+          if (badge) badge.textContent = `${contents.length} nội dung`;
+        }
+      });
+    }
+
     const backBtn = document.getElementById('bulkBackBtn');
     const nextBtn = document.getElementById('bulkNextBtn');
     const execBtn = document.getElementById('bulkExecuteBtn');
