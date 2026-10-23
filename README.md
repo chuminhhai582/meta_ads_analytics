@@ -147,9 +147,23 @@ lấy lead mới tạo.
 ```bash
 npm test
 ```
-41 test khoá lại các chỉ số dễ sai nhất: ghép lead vào chiến dịch, lọc theo kỳ và theo
-tài khoản, bất biến `Σ các dòng + chưa gán = tổng KPI`, và việc không gửi số điện thoại
-thật về browser. **Chạy trước khi commit mọi thay đổi trong `src/report.js`.**
+Bộ 109 automated tests khoá lại các chỉ số an toàn và bất biến quan trọng nhất: ghép lead vào chiến dịch, lọc theo kỳ và theo
+tài khoản, bất biến `Σ các dòng + chưa gán = tổng KPI`, việc không gửi số điện thoại
+thật về browser, và toàn bộ quy tắc an toàn của engine Đăng Ads hàng loạt (status luôn PAUSED, trần đối tượng, CBO lock, retry lỗi tạm thời).
+
+### 5. Quản lý Đăng bài chéo Fanpage & Đăng Ads hàng loạt (`/cross-post`)
+
+Truy cập đường dẫn: **`http://localhost:3000/cross-post`**
+
+Module gồm 3 tab chức năng:
+1. **Tab 1 — Đăng bài chéo Fanpage**: Sao chép bài viết từ 1 Fanpage nguồn sang nhiều Fanpage đích trong BM, hỗ trợ tinh chỉnh nội dung và hình ảnh, giãn cách bảo vệ 1.5s.
+2. **Tab 2 — Nhân bản & Tạo Ads mới (Ads Creation Studio)**: Quy trình 4 bước nâng cấp cho phép tạo tới 15 Chiến dịch mới (sinh nhanh 4 sản phẩm UCMAS, UCKID, MATHCA, TRẠI HÈ) và 3 mẫu Nhóm quảng cáo (gán tới 45 nhóm đích), tự động khoá ngân sách nhóm khi CĐ dùng CBO.
+3. **Tab 3 — Đăng Ads hàng loạt vào CĐ/Nhóm có sẵn (gồm Chiến dịch nháp)**: Duyệt cây chiến dịch và nhóm đích (tối đa 45 nhóm), soạn tới 12 nội dung độc lập (Custom/Post Fanpage/Ads mẫu/Thư viện), ma trận ghép cặp trực quan và thực thi theo Job ngầm.
+
+⚠️ **3 Lưu ý quan trọng khi dùng Đăng Ads hàng loạt:**
+- **Trạng thái PAUSED tuyệt đối:** Mọi Chiến dịch, Nhóm và Quảng cáo tạo mới **LUÔN ở trạng thái PAUSED (Tạm dừng)** để bảo vệ ngân sách. Người dùng phải vào Trình quản lý quảng cáo Meta kiểm tra và bật thủ công khi sẵn sàng.
+- **Tiến trình ngầm (Job Model):** Đợt tạo tối đa (15 CĐ × 3 nhóm × 3 nội dung = 135 ads, 195 đối tượng) có thể mất tới **~7 phút** do giãn cách an toàn chống checkpoint (2s - 2.5s/lệnh). Tiến trình chạy độc lập ở server nên **đóng tab vẫn tiếp tục chạy**, có thể mở lại qua đường dẫn `http://localhost:3000/api/cp/job/<jobId>` và tải file CSV kết quả.
+- **Giới hạn về bản nháp:** Hệ thống nhận diện chiến dịch nháp loại A (đã tồn tại trên Meta nhưng chưa có ad, hoặc `IN_PROCESS`, `WITH_ISSUES`). Các bản nháp còn nằm dở trong **trình tạo của Ads Manager** (chưa bấm Đóng/Lưu bản nháp) thì Marketing API không thể đọc được.
 
 ## 🔒 Về bảo mật
 
@@ -158,7 +172,7 @@ Dashboard hiển thị chi tiêu, doanh thu và số điện thoại phụ huynh
 - Server **chỉ nhận kết nối từ chính máy cài đặt**. Máy khác trong mạng LAN nhận 403.
   Muốn mở ra LAN có chủ ý: đặt `ALLOW_REMOTE=true` trong `.env`.
 - **Không gửi header CORS** — website khác bạn đang mở không đọc được dữ liệu BM.
-- Các thao tác ghi (lưu token, đồng bộ) yêu cầu token phiên nội bộ, chống việc một trang
-  web lạ âm thầm ghi đè Access Token.
+- Các thao tác ghi (lưu token, đồng bộ, tạo quảng cáo) yêu cầu token phiên nội bộ, chống việc một trang
+  web lạ âm thầm ghi đè Access Token hay can thiệp tài khoản quảng cáo.
 - Payload trả về browser chỉ chứa **số điện thoại đã che** (ví dụ `0912***345`), không có số gốc.
 - Bấm nút **Xuất dữ liệu** để tải file CSV mở trong Excel hoặc file JSON.

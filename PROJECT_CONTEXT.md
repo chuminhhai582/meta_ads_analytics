@@ -109,19 +109,36 @@ Local_phantich_ads/
 ├── data/                             # Dữ liệu sinh tự động (gitignored)
 │   ├── latest_insights.json          # Snapshot raw report v4 (adMap + coverage)
 │   ├── campaigns.csv                 # Excel UTF-8 BOM
-│   └── daily_performance.csv
+│   ├── daily_performance.csv
+│   ├── cp_content_library.json       # Thư viện nội dung ads mẫu
+│   └── cp_image_hashes.json          # Cache SHA256 ảnh -> image_hash Meta
 ├── public/                           # Frontend tĩnh (served by Express)
 │   ├── index.html                    # Layout dashboard chuẩn SEO & responsive
+│   ├── cross-post.html               # Trang quản trị Cross-Post & Đăng Ads hàng loạt
 │   ├── css/style.css                 # Design system Dark Glassmorphism dùng CSS variables
-│   └── js/app.js                     # Logic UI, Chart.js, bộ lọc & sắp xếp bảng
+│   ├── css/cross-post.css            # Stylesheet module Cross-Post & Ads Studio
+│   └── js/
+│       ├── app.js                    # Logic UI Dashboard chính
+│       ├── cp-shared.js              # Tiện ích dùng chung, ContentEditor, upload ảnh, Spintax
+│       ├── cross-post-app.js         # Tab 1: Đăng chéo Fanpage
+│       ├── ads-studio.js             # Tab 2: Ads Creation Studio (nâng cấp nhiều CĐ & nhóm)
+│       └── bulk-ads-app.js           # Tab 3: Đăng Ads hàng loạt vào CĐ/Nhóm có sẵn (gồm nháp)
+├── test/                             # Automated test suite (109 tests PASS)
+│   ├── report.test.js
+│   ├── cross-post.test.js
+│   ├── cp-guard.test.js
+│   └── bulk-ads.test.js              # Unit tests engine đăng ads hàng loạt (35+ tests)
 ├── src/
 │   ├── config.js                     # Đọc .env & updateEnvFile an toàn
 │   ├── meta-api.js                   # Client Graph API với phân trang toàn diện
 │   ├── report.js                     # View builder lọc 4 sản phẩm & tổng hợp chỉ số
 │   ├── ai-analyst.js                 # Động cơ chẩn đoán rule-based chuẩn CPA tin nhắn
 │   ├── export-csv.js                 # Xuất CSV UTF-8 BOM & JSON
+│   ├── cross-post.js                 # Module Cross-Post & Engine build-structure
 │   └── server.js                     # Express server + REST API (chỉ loopback + token CSRF)
 ├── docs/                             # Tài liệu & lưu trữ
+│   ├── KE_HOACH_TAB_ADS_HANG_LOAT_2026-10-23.md
+│   ├── HUONG_DAN_CODE_ADS_HANG_LOAT.md
 │   └── archive/                      # Báo cáo rà soát & hướng dẫn lịch sử đã hoàn thành
 │       ├── BAO_CAO_RA_SOAT_2026-10-16.md
 │       ├── HUONG_DAN_FIX_2026-10-22.md
@@ -163,6 +180,21 @@ Local_phantich_ads/
 | POST | `/api/sync-sheet` | Chỉ làm mới lead Google Sheet (~0,3s, không gọi Meta) |
 | GET | `/api/export/campaigns` \| `/daily` \| `/json` | Xuất CSV / JSON theo bộ lọc hiện tại |
 | GET | `/docs/huong-dan-token` | Tải tài liệu hướng dẫn lấy token dạng text UTF-8 |
+
+### Cross-Post Manager — Engine tạo hàng loạt (từ 23/10/2026)
+
+| Method | Endpoint | Mô tả |
+|---|---|---|
+| GET  | `/api/cp/ad-accounts/:id/campaigns?statuses=all&withDraftFlag=1` | Chiến dịch kèm cờ `isDraft` (nháp = chưa có ad / IN_PROCESS / WITH_ISSUES) |
+| GET  | `/api/cp/ad-accounts/:id/adsets?campaignIds=a,b,c` | Nhóm QC của nhiều chiến dịch trong 1 request |
+| POST | `/api/cp/upload-ad-image` | Upload ảnh → `image_hash` (body tới 12 MB) |
+| GET/POST | `/api/cp/content-library` | Thư viện nội dung quảng cáo |
+| POST | `/api/cp/build-structure` | **Engine chung tab 2 + tab 3**: tạo CĐ → nhóm → quảng cáo theo job |
+| GET  | `/api/cp/job/:jobId/csv` | Xuất kết quả đợt chạy (UTF-8 BOM) |
+
+Trần an toàn: 15 chiến dịch · 3 nhóm/chiến dịch · 45 nhóm · 12 nội dung · 135 quảng cáo · 195 đối tượng mỗi đợt. Tất cả tạo ra ở trạng thái **PAUSED**.
+
+Giới hạn đã biết: Marketing API **không có** status DRAFT. Bản nháp còn nằm trong trình tạo của Ads Manager (chưa sinh object) thì không đọc được — chỉ lấy được chiến dịch nháp đã tồn tại trên Meta.
 
 > Không có route `/auth/*` — ứng dụng không dùng OAuth, chỉ dán token thủ công.
 
@@ -422,4 +454,5 @@ Báo cáo đầy đủ kèm số đo kiểm chứng: [`BAO_CAO_RA_SOAT_2026-10-1
 | 2026-10-22 | **Rà soát & tối ưu toàn diện 28 hạng mục (Đợt 1–4, 64/64 tests PASS - Đã duyệt)**: (1) Sửa layout footer, định nghĩa 7 biến CSS thiếu, liên kết export theo bộ lọc, chặn CSRF cho API ghi; (2) Lọc chiến dịch rỗng khỏi payload (−89%), nén gzip bằng zlib native (−94%), bảo toàn 100% bất biến KPI; (3) Bổ sung 15 automated tests (tổng 64 tests), chốt cờ debounce & chốt chống chạy trùng, cập nhật Chart tại chỗ, a11y bàn phím & modal; (4) Bật/tắt nhóm cột bảng, Job model nhân bản hàng loạt chống timeout, chuẩn hoá snapshot v4 vs view v5, đọc RAM trực tiếp, compact cache, ghim CDN + static cache headers, nâng tương phản WCAG AA, prefers-reduced-motion + print style. |
 | 2026-10-22 | **Lưu trữ & dọn dẹp tài liệu hoàn thành (Đã duyệt)**: Chuyển các báo cáo rà soát và hướng dẫn đã hoàn thành (BAO_CAO_RA_SOAT_2026-10-16.md, HUONG_DAN_FIX_2026-10-22.md, HUONG_DAN_LAY_TOKEN_TU_N8N.md) vào thư mục docs/archive/ giúp thư mục gốc gọn gàng. |
 | 2026-10-23 | **Sửa lỗi làm mới Fanpage & TK (Cross-Post Manager)**: Khắc phục lỗi `ReferenceError: sourceAccountSelect is not defined` trong `public/js/cross-post-app.js` bằng cách trỏ đúng ID `studioAccountSelect`, kiểm tra DOM element an toàn và bảo toàn lựa chọn tài khoản hiện tại. |
+| 2026-10-23 | **Tạo nội dung & Đăng Ads hàng loạt (Tab 3 mới + Nâng cấp Tab 2 - Đã duyệt)**: (1) Module hoá frontend thành `cp-shared.js`, `ads-studio.js`, `bulk-ads-app.js`; (2) Tab 3 mới: Cây duyệt chiến dịch nháp/đang chạy, chọn tới 45 nhóm đích; (3) Bộ soạn nội dung dùng chung `ContentEditor` (Custom, Fanpage posts, Ads mẫu, Thư viện) + upload ảnh base64 lấy `image_hash` cache disk + CTA tuỳ biến + Spintax + Hook 4 sản phẩm; (4) Ma trận ghép cặp (matrix, 1-1, round-robin), trừ ô, ước tính thời gian; (5) Engine chung `POST /api/cp/build-structure` (3 pha Campaign → Adset → Ad, retry transient error 1 lần, xuất CSV, tất cả PAUSED); (6) Cổng số xác nhận an toàn chống bấm nhầm; (7) Nâng cấp Tab 2 tạo nhiều CĐ (tối đa 15) và nhiều nhóm (tối đa 3 mẫu), sinh nhanh 4 sản phẩm, khoá ngân sách nhóm khi CĐ dùng CBO; (8) Bổ sung 45 unit tests (`test/bulk-ads.test.js`, tổng 109 tests PASS). Không ảnh hưởng Dashboard (`/`). |
 

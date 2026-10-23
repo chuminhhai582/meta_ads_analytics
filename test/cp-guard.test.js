@@ -32,7 +32,8 @@ test('S-01: mọi route ghi /api/cp đòi X-Internal-Token', async (t) => {
 
   const writeRoutes = [
     'publish', 'replicate-ad', 'analyze-campaigns', 'bulk-replicate',
-    'refresh-cache', 'create-campaign', 'create-adset', 'batch-create-ads'
+    'refresh-cache', 'create-campaign', 'create-adset', 'batch-create-ads',
+    'build-structure', 'upload-ad-image', 'content-library'
   ];
 
   for (const p of writeRoutes) {
