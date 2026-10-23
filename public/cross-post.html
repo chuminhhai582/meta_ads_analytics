@@ -793,7 +793,64 @@
       </div>
     </div>
   </div>
-  <div id="bulkStep4" class="studio-step-container" style="display:none;"></div>
+  <!-- ---------------- BƯỚC 4 ---------------- -->
+  <div id="bulkStep4" class="studio-step-container" style="display:none;">
+    <div class="cp-card">
+      <div class="cp-card-header">
+        <h2 class="cp-card-title">
+          <span class="step-num">4</span>
+          <span>Tiến trình Thực thi &amp; Kết quả</span>
+        </h2>
+        <span class="badge" id="bulkJobStatusBadge">Chờ khởi chạy</span>
+      </div>
+
+      <div class="cp-editor-box">
+        <!-- Progress Bar Box -->
+        <div style="margin-bottom:var(--space-4);">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <strong id="bulkPhaseText" style="font-size:0.95rem;color:var(--text-primary);">Đang chuẩn bị...</strong>
+            <span id="bulkProgressText" style="font-size:0.85rem;color:var(--text-secondary);">0 / 0</span>
+          </div>
+          <div style="width:100%;height:10px;background:var(--bg-input);border-radius:var(--radius-full);overflow:hidden;border:1px solid var(--border-subtle);">
+            <div id="bulkProgressFill" style="width:0%;height:100%;background:linear-gradient(90deg, var(--primary), var(--success));transition:width 0.3s ease;"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:0.75rem;color:var(--text-muted);">
+            <span>Mã tiến trình: <code id="bulkJobIdText">(chưa có)</code></span>
+            <span>(Đóng tab vẫn chạy ngầm trên server trong 1 giờ)</span>
+          </div>
+        </div>
+
+        <!-- Real-time Exec Logs -->
+        <div class="cp-form-group">
+          <label class="cp-form-label">Nhật ký thực thi thời gian thực:</label>
+          <div id="bulkExecLog" style="height:180px;overflow-y:auto;background:var(--bg-inset);border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:var(--space-3);font-family:monospace;font-size:0.8rem;">
+            <div style="color:var(--text-muted);">Chờ bắt đầu...</div>
+          </div>
+        </div>
+
+        <!-- Result Section (khi hoàn tất) -->
+        <div id="bulkResultSection" style="display:none;margin-top:var(--space-4);">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-3);padding-bottom:var(--space-2);border-bottom:1px solid var(--border-subtle);">
+            <h3 style="font-size:1.05rem;font-weight:700;color:var(--text-primary);">Bảng tổng kết đối tượng đã tạo (tất cả PAUSED)</h3>
+            <div style="display:flex;gap:var(--space-2);">
+              <a id="bulkDownloadCsvBtn" class="btn btn-secondary btn-sm" href="#" target="_blank">
+                <i data-lucide="download"></i><span>Tải file CSV kết quả</span>
+              </a>
+              <button type="button" class="btn btn-primary btn-sm" id="bulkRetryFailedBtn" style="display:none;">
+                <i data-lucide="rotate-ccw"></i><span>Thử lại các mục lỗi</span>
+              </button>
+            </div>
+          </div>
+
+          <div style="overflow-x:auto;border:1px solid var(--border-subtle);border-radius:var(--radius-md);">
+            <table class="bulk-matrix-table" id="bulkResultTable">
+              <!-- Render results -->
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
       <footer class="studio-nav-bar">
         <button type="button" class="btn btn-secondary" id="bulkBackBtn" style="display:none;">

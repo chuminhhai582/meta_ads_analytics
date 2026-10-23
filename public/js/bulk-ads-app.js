@@ -815,9 +815,258 @@ window.BulkAds = (function () {
     }
   }
 
+  // ------------------------------------------------------------------
+  // BƯỚC 4 — Thực thi & Poll Job
+  // ------------------------------------------------------------------
+
+  function confirmExecute(adCount, etaSeconds) {
+    const min = Math.ceil(etaSeconds / 60);
+    const typed = prompt(
+      `Sắp tạo ${adCount} quảng cáo THẬT trên Meta (tất cả PAUSED).\n` +
+      `Ước tính ≈ ${min} phút.\n\n` +
+      `Gõ đúng số ${adCount} để xác nhận:`
+    );
+    return String(typed || '').trim() === String(adCount);
+  }
+
+  async function executeBulk() {
+    if (st.isExecuting) return;
+
+    const { pairs, error } = buildPairs();
+    if (error) {
+      alert(error);
+      return;
+    }
+    if (pairs.length === 0) {
+      alert('Chưa có quảng cáo nào để tạo.');
+      return;
+    }
+    if (pairs.length > LIMITS.MAX_ADS) {
+      alert(`Vượt trần an toàn ${LIMITS.MAX_ADS} quảng cáo (đang chọn ${pairs.length}).`);
+      return;
+    }
+
+    const creativeCount = new Set(pairs.map(p => `${p.target.pageId || 'p'}|${p.content.key}`)).size;
+    const etaSec = estimateSeconds(pairs.length, creativeCount);
+
+    if (!confirmExecute(pairs.length, etaSec)) {
+      return;
+    }
+
+    st.isExecuting = true;
+    st.planId = crypto.randomUUID ? crypto.randomUUID() : ('plan_' + Math.random().toString(36).slice(2, 9));
+    goToStep(4);
+
+    const execBtn = document.getElementById('bulkExecuteBtn');
+    if (execBtn) execBtn.disabled = true;
+
+    const phaseText = document.getElementById('bulkPhaseText');
+    const badge = document.getElementById('bulkJobStatusBadge');
+    if (phaseText) phaseText.textContent = 'Đang gửi kế hoạch tạo quảng cáo tới server...';
+    if (badge) {
+      badge.textContent = 'Đang chạy';
+      badge.className = 'badge';
+    }
+
+    const logBox = document.getElementById('bulkExecLog');
+    if (logBox) logBox.innerHTML = '<div style="color:var(--primary);">Khởi tạo đợt chạy...</div>';
+
+    try {
+      const data = await S.apiPost('/api/cp/build-structure', {
+        planId: st.planId,
+        accountId: st.accountId,
+        campaigns: [],                 // tab 3 KHÔNG tạo chiến dịch mới
+        adsets: [],                    // tab 3 KHÔNG tạo nhóm mới
+        existingTargets: Array.from(st.selectedAdsets.values()),
+        contents: st.contents,
+        pairingMode: st.pairingMode,
+        namePattern: st.namePattern,
+        excludedPairs: Array.from(st.excludedPairs)
+      });
+
+      st.jobId = data.jobId;
+      const jobIdText = document.getElementById('bulkJobIdText');
+      if (jobIdText) jobIdText.textContent = data.jobId;
+
+      const csvBtn = document.getElementById('bulkDownloadCsvBtn');
+      if (csvBtn) csvBtn.href = `/api/cp/job/${data.jobId}/csv`;
+
+      pollJob(data.jobId);
+    } catch (err) {
+      st.isExecuting = false;
+      if (phaseText) phaseText.textContent = `Lỗi: ${err.message}`;
+      if (badge) {
+        badge.textContent = 'Lỗi';
+        badge.className = 'badge';
+      }
+      if (logBox) logBox.innerHTML += `<div class="cp-log-row cp-log-row--error">Lỗi khởi tạo: ${S.escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function pollJob(jobId) {
+    if (st.polling) clearInterval(st.polling);
+
+    st.polling = setInterval(async () => {
+      try {
+        const j = await S.apiGet(`/api/cp/job/${jobId}`);
+        renderProgress(j);
+        renderLogs(j.logs || []);
+
+        if (j.status === 'done' || j.status === 'error') {
+          clearInterval(st.polling);
+          st.polling = null;
+          st.isExecuting = false;
+          renderResultTable(j);
+        }
+      } catch (err) {
+        renderLogs([{
+          at: new Date().toISOString(),
+          level: 'warn',
+          msg: `Mất kết nối thăm dò (${err.message}) — đang thử lại...`
+        }]);
+      }
+    }, 2000);
+  }
+
+  function renderProgress(job) {
+    const total = job.total || 1;
+    const done = job.done || 0;
+    const pct = Math.min(100, Math.round((done / total) * 100));
+
+    const fill = document.getElementById('bulkProgressFill');
+    if (fill) fill.style.width = `${pct}%`;
+
+    const txt = document.getElementById('bulkProgressText');
+    if (txt) txt.textContent = `${done} / ${total} đối tượng (${pct}%)`;
+
+    const phase = document.getElementById('bulkPhaseText');
+    if (phase) {
+      if (job.status === 'done') {
+        phase.textContent = '✓ Hoàn tất đợt tạo quảng cáo!';
+        phase.style.color = 'var(--success-text)';
+      } else if (job.status === 'error') {
+        phase.textContent = `✕ Có lỗi xảy ra: ${job.error || 'Dừng đợt chạy'}`;
+        phase.style.color = 'var(--danger-text)';
+      } else {
+        const phaseNames = {
+          campaigns: 'Đang tạo Chiến dịch mới...',
+          adsets: 'Đang tạo Nhóm quảng cáo mới...',
+          ads: 'Đang tạo Quảng cáo mới...'
+        };
+        phase.textContent = phaseNames[job.phase] || `Đang xử lý (${job.phase || '...'})...`;
+        phase.style.color = 'var(--text-primary)';
+      }
+    }
+
+    const badge = document.getElementById('bulkJobStatusBadge');
+    if (badge) {
+      if (job.status === 'done') {
+        badge.textContent = 'Hoàn thành';
+      } else if (job.status === 'error') {
+        badge.textContent = 'Thất bại';
+      } else {
+        badge.textContent = `Đang chạy (${pct}%)`;
+      }
+    }
+  }
+
+  function renderLogs(logs = []) {
+    const box = document.getElementById('bulkExecLog');
+    if (!box) return;
+    box.innerHTML = logs.map(l => {
+      const cls = l.level === 'error' ? 'cp-log-row--error' : (l.level === 'warn' ? 'cp-log-row--warn' : 'cp-log-row--success');
+      const time = l.at ? new Date(l.at).toLocaleTimeString('vi-VN') : '';
+      return `<div class="cp-log-row ${cls}">[${time}] ${S.escapeHtml(l.msg)}</div>`;
+    }).join('');
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function renderResultTable(job) {
+    const resSec = document.getElementById('bulkResultSection');
+    const table = document.getElementById('bulkResultTable');
+    if (resSec) resSec.style.display = 'block';
+    if (!table) return;
+
+    const ads = job.created?.ads || [];
+    if (ads.length === 0) {
+      table.innerHTML = `<tbody><tr><td class="cp-empty-state">Không có quảng cáo nào được tạo.</td></tr></tbody>`;
+      return;
+    }
+
+    let html = `
+      <thead class="bulk-matrix-head">
+        <tr>
+          <th style="width:40px;">#</th>
+          <th>Chiến dịch</th>
+          <th>Nhóm quảng cáo</th>
+          <th>Tên Quảng cáo</th>
+          <th>Ad ID</th>
+          <th>Creative ID</th>
+          <th>Trạng thái</th>
+          <th>Chi tiết</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+    let failedCount = 0;
+    ads.forEach((a, i) => {
+      if (!a.success) failedCount++;
+      html += `
+        <tr>
+          <td style="text-align:center;color:var(--text-muted);">${i + 1}</td>
+          <td>${S.escapeHtml(a.campaignName || a.campaignId || '')}</td>
+          <td>${S.escapeHtml(a.adsetName || a.adsetId || '')}</td>
+          <td><strong>${S.escapeHtml(a.adName || a.contentName || 'QC')}</strong></td>
+          <td>${a.adId ? `<code>${a.adId}</code>` : '<span style="color:var(--text-muted);">-</span>'}</td>
+          <td>${a.creativeId ? `<code>${a.creativeId}</code>` : '<span style="color:var(--text-muted);">-</span>'}</td>
+          <td>
+            ${a.success
+              ? '<span class="bulk-chip bulk-chip--draft" style="background:rgba(16, 185, 129, 0.2);color:var(--success-text);">PAUSED</span>'
+              : (a.skipped
+                  ? '<span class="bulk-chip bulk-chip--warn">Bỏ qua</span>'
+                  : '<span class="bulk-chip" style="background:rgba(239, 68, 68, 0.2);color:var(--danger-text);">Lỗi</span>')}
+          </td>
+          <td style="font-size:0.75rem;color:${a.error ? 'var(--danger-text)' : 'var(--text-muted)'};">
+            ${S.escapeHtml(a.error || (a.success ? 'Thành công (PAUSED)' : ''))}
+          </td>
+        </tr>`;
+    });
+    html += `</tbody>`;
+    table.innerHTML = html;
+
+    const retryBtn = document.getElementById('bulkRetryFailedBtn');
+    if (retryBtn) {
+      retryBtn.style.display = failedCount > 0 ? 'inline-flex' : 'none';
+      retryBtn.onclick = () => retryFailed(job);
+    }
+
+    S.refreshIcons();
+  }
+
+  function retryFailed(job) {
+    const failedAds = (job.created?.ads || []).filter(a => !a.success && a.pairKey);
+    if (failedAds.length === 0) {
+      alert('Không có quảng cáo nào bị lỗi để thử lại.');
+      return;
+    }
+    const failedPairKeys = new Set(failedAds.map(a => a.pairKey));
+    const { pairs } = buildPairs();
+    st.excludedPairs.clear();
+    pairs.forEach(p => {
+      if (!failedPairKeys.has(p.pairKey)) {
+        st.excludedPairs.add(p.pairKey);
+      }
+    });
+
+    goToStep(3);
+    renderMatrix();
+    alert(`Đã chuẩn bị thử lại cho ${failedAds.length} quảng cáo bị lỗi. Vui lòng bấm Thực thi để chạy.`);
+  }
+
   return {
     init,
     getState: () => st,
-    goToStep
+    goToStep,
+    execute: executeBulk
   };
 })();
