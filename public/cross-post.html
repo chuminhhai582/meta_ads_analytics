@@ -309,14 +309,20 @@
                 <input type="text" id="campFullNamePreview" class="cp-input" readonly style="font-weight:600;color:var(--cyan-text);background:var(--bg-card-solid);">
               </div>
 
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);margin-top:var(--space-3);">
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-3);margin-top:var(--space-3);">
                 <div class="cp-form-group">
-                  <label class="cp-form-label">Mục tiêu chiến dịch (Graph API v21.0)</label>
-                  <input type="text" class="cp-input" value="OUTCOME_ENGAGEMENT (Tin nhắn / Tương tác)" readonly disabled>
+                  <label class="cp-form-label">Mục tiêu chiến dịch (v21.0)</label>
+                  <input type="text" class="cp-input" value="OUTCOME_ENGAGEMENT" readonly disabled>
                 </div>
                 <div class="cp-form-group">
-                  <label for="campCboBudget" class="cp-form-label">Ngân sách CBO (Tùy chọn, để trống nếu dùng ABO)</label>
-                  <input type="number" id="campCboBudget" class="cp-input" placeholder="Để trống nếu đặt ngân sách ở nhóm" min="50000" step="10000">
+                  <label for="campPageSelect" class="cp-form-label">Fanpage đích nhận tin nhắn</label>
+                  <select id="campPageSelect" class="select-filter" style="width:100%;">
+                    <option value="">-- Đang tải Fanpage... --</option>
+                  </select>
+                </div>
+                <div class="cp-form-group">
+                  <label for="campCboBudget" class="cp-form-label">Ngân sách CBO (Tùy chọn)</label>
+                  <input type="number" id="campCboBudget" class="cp-input" placeholder="Để trống nếu ABO" min="50000" step="10000">
                 </div>
               </div>
             </div>
@@ -395,11 +401,26 @@
                 </div>
 
                 <div class="cp-form-group">
-                  <label for="newAdsetPageSelect" class="cp-form-label">Fanpage đích nhận tin nhắn</label>
+                  <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <label for="newAdsetPageSelect" class="cp-form-label" style="margin-bottom:2px;">Fanpage đích nhận tin nhắn</label>
+                    <span id="hintCampPageMode" style="font-size:0.75rem;color:var(--cyan-text);display:none;font-weight:600;">(Tự động theo từng CĐ)</span>
+                  </div>
                   <select id="newAdsetPageSelect" class="select-filter" style="width:100%;">
                     <option value="">-- Đang tải Fanpage... --</option>
                   </select>
                 </div>
+              </div>
+
+              <!-- Danh sách mapping Fanpage theo từng chiến dịch khi tạo nhiều CĐ -->
+              <div id="boxCampPageMapping" style="display:none;margin-top:var(--space-3);background:var(--bg-card-solid);padding:var(--space-3);border-radius:var(--radius-sm);border:1px solid var(--border-subtle);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-2);">
+                  <div style="font-size:0.85rem;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:6px;">
+                    <i data-lucide="layers" style="width:15px;height:15px;color:var(--primary);"></i>
+                    <span>Fanpage đích cho từng Chiến dịch</span>
+                  </div>
+                  <span style="font-size:0.75rem;color:var(--text-muted);">Mỗi chiến dịch có thể nhận tin nhắn qua Fanpage riêng biệt</span>
+                </div>
+                <div id="campPageMappingList" style="display:flex;flex-direction:column;gap:var(--space-2);"></div>
               </div>
 
               <div class="cp-form-group" style="margin-top:var(--space-3);">

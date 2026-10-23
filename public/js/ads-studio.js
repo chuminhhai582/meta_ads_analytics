@@ -41,9 +41,10 @@ window.AdsStudio = (function () {
     campProduct: 'ucmas',
     campDesc: 'mess/khaigiang',
     campCboBudget: '',
+    campPageId: '',
 
     // Step 1: Multi Campaign Cards
-    campaignCards: [], // { id, key, prefix, product, desc, cboBudget, name }
+    campaignCards: [], // { id, key, prefix, product, desc, cboBudget, pageId, name }
 
     // Step 2: Existing Adsets
     selectedExistingAdsetIds: new Set(),
@@ -92,6 +93,21 @@ window.AdsStudio = (function () {
     const prod = (product || 'ucmas').trim().toLowerCase();
     const d = formatCleanDesc(desc);
     return `${p}/${prod}/mess/${d}`;
+  }
+
+  function autoMatchPage(prodKey) {
+    const pages = S.getPages();
+    if (!pages || pages.length === 0) return '';
+    const k = String(prodKey || '').toLowerCase();
+    const found = pages.find(p => {
+      const name = (p.name || '').toLowerCase();
+      if (k === 'ucmas') return name.includes('ucmas');
+      if (k === 'uckid') return name.includes('uckid') || name.includes('uc-kid') || name.includes('uc kid');
+      if (k === 'mathca') return name.includes('mathca') || name.includes('math') || name.includes('toán');
+      if (k === 'traihe') return name.includes('traihe') || name.includes('trại hè') || name.includes('summer');
+      return false;
+    });
+    return found ? found.id : (pages[0]?.id || '');
   }
 
   // ------------------------------------------------------------------
@@ -195,6 +211,7 @@ window.AdsStudio = (function () {
     const campPrefixInput = document.getElementById('campPrefixInput');
     const campDescInput = document.getElementById('campDescInput');
     const campCboBudget = document.getElementById('campCboBudget');
+    const campPageSelect = document.getElementById('campPageSelect');
 
     campPrefixInput?.addEventListener('input', (e) => {
       studioState.campPrefix = e.target.value.trim() || 'haicm';
@@ -211,12 +228,23 @@ window.AdsStudio = (function () {
       syncBudgetLock();
     });
 
+    campPageSelect?.addEventListener('change', (e) => {
+      studioState.campPageId = e.target.value;
+      renderStructurePreview();
+    });
+
     document.querySelectorAll('#campProductTags .product-tag-pill').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('#campProductTags .product-tag-pill').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         studioState.campProduct = btn.dataset.product || 'ucmas';
+        const matchedPageId = autoMatchPage(studioState.campProduct);
+        if (campPageSelect && matchedPageId) {
+          campPageSelect.value = matchedPageId;
+          studioState.campPageId = matchedPageId;
+        }
         updateSingleCampNamePreview();
+        renderStructurePreview();
       });
     });
 
@@ -259,6 +287,11 @@ window.AdsStudio = (function () {
     });
     document.getElementById('newAdsetPageSelect')?.addEventListener('change', e => {
       studioState.newAdsetPageId = e.target.value;
+      const boxMapping = document.getElementById('boxCampPageMapping');
+      if (boxMapping) {
+        boxMapping.style.display = (studioState.campMode === 'multi' && e.target.value === '__by_campaign__') ? 'block' : 'none';
+      }
+      renderStructurePreview();
     });
     document.getElementById('newAdsetBudget')?.addEventListener('input', e => {
       studioState.newAdsetBudget = Number(e.target.value) || 100000;
@@ -363,8 +396,12 @@ window.AdsStudio = (function () {
       product: 'ucmas',
       desc: studioState.campDesc || 'mess/khaigiang',
       cboBudget: '',
+      pageId: '',
       name: ''
     };
+    if (!item.pageId) {
+      item.pageId = autoMatchPage(item.product);
+    }
     item.name = makeCampaignName(item.prefix, item.product, item.desc);
 
     studioState.campaignCards.push(item);
@@ -386,6 +423,7 @@ window.AdsStudio = (function () {
         product: prod,
         desc: d,
         cboBudget: studioState.campCboBudget || '',
+        pageId: autoMatchPage(prod),
         name: makeCampaignName(p, prod, d)
       };
       return item;
@@ -408,6 +446,7 @@ window.AdsStudio = (function () {
       return;
     }
 
+    const pages = S.getPages();
     const products = [
       { id: 'ucmas', label: 'UCMAS' },
       { id: 'uckid', label: 'UCKID' },
@@ -421,6 +460,10 @@ window.AdsStudio = (function () {
                 data-card-id="${card.id}" data-product="${pr.id}">
           ${pr.label}
         </button>
+      `).join('');
+
+      const pageOptions = pages.map(p => `
+        <option value="${p.id}" ${card.pageId === p.id ? 'selected' : ''}>${S.escapeHtml(p.name)}</option>
       `).join('');
 
       return `
@@ -454,20 +497,28 @@ window.AdsStudio = (function () {
             </div>
           </div>
 
-          <div style="display:grid;grid-template-columns:2fr 1fr;gap:var(--space-2);margin-bottom:var(--space-2);">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-2);margin-bottom:var(--space-2);">
             <div class="cp-form-group" style="margin-bottom:0;">
               <label class="cp-form-label" style="font-size:0.75rem;">Thông điệp gợi nhớ (VD: mess/khaigiang)</label>
               <input type="text" class="cp-input sc-desc-input" data-card-id="${card.id}" value="${S.escapeHtml(card.desc)}" placeholder="mess/khaigiang">
             </div>
             <div class="cp-form-group" style="margin-bottom:0;">
-              <label class="cp-form-label" style="font-size:0.75rem;">Ngân sách CBO (VNĐ)</label>
-              <input type="number" class="cp-input sc-cbo-input" data-card-id="${card.id}" value="${card.cboBudget || ''}" placeholder="Để trống nếu ABO" min="50000" step="10000">
+              <label class="cp-form-label" style="font-size:0.75rem;">Fanpage đích nhận tin nhắn</label>
+              <select class="select-filter sc-page-select" data-card-id="${card.id}" style="width:100%;font-size:0.8rem;">
+                ${pageOptions}
+              </select>
             </div>
           </div>
 
-          <div class="cp-form-group" style="margin-bottom:0;">
-            <label class="cp-form-label" style="font-size:0.75rem;">Tên hoàn chỉnh trên Meta</label>
-            <input type="text" class="cp-input sc-name-preview" data-card-id="${card.id}" value="${S.escapeHtml(card.name)}" readonly style="font-weight:600;color:var(--cyan-text);background:var(--bg-input);">
+          <div style="display:grid;grid-template-columns:1fr 2fr;gap:var(--space-2);margin-bottom:0;">
+            <div class="cp-form-group" style="margin-bottom:0;">
+              <label class="cp-form-label" style="font-size:0.75rem;">Ngân sách CBO (VNĐ)</label>
+              <input type="number" class="cp-input sc-cbo-input" data-card-id="${card.id}" value="${card.cboBudget || ''}" placeholder="Để trống nếu ABO" min="50000" step="10000">
+            </div>
+            <div class="cp-form-group" style="margin-bottom:0;">
+              <label class="cp-form-label" style="font-size:0.75rem;">Tên hoàn chỉnh trên Meta</label>
+              <input type="text" class="cp-input sc-name-preview" data-card-id="${card.id}" value="${S.escapeHtml(card.name)}" readonly style="font-weight:600;color:var(--cyan-text);background:var(--bg-input);">
+            </div>
           </div>
         </div>
       `;
@@ -488,6 +539,17 @@ window.AdsStudio = (function () {
       });
     });
 
+    container.querySelectorAll('.sc-page-select').forEach(sel => {
+      sel.addEventListener('change', (e) => {
+        const id = e.target.dataset.cardId;
+        const c = studioState.campaignCards.find(x => x.id === id);
+        if (c) {
+          c.pageId = e.target.value;
+          renderStructurePreview();
+        }
+      });
+    });
+
     container.querySelectorAll('.product-tag-pill').forEach(btn => {
       btn.addEventListener('click', () => {
         const id = btn.dataset.cardId;
@@ -496,10 +558,13 @@ window.AdsStudio = (function () {
         if (c) {
           c.product = prod;
           c.name = makeCampaignName(c.prefix, c.product, c.desc);
+          c.pageId = autoMatchPage(prod);
           container.querySelectorAll(`.product-tag-pill[data-card-id="${id}"]`).forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
           const pr = container.querySelector(`.sc-name-preview[data-card-id="${id}"]`);
           if (pr) pr.value = c.name;
+          const pageSel = container.querySelector(`.sc-page-select[data-card-id="${id}"]`);
+          if (pageSel && c.pageId) pageSel.value = c.pageId;
           renderStructurePreview();
         }
       });
@@ -543,6 +608,7 @@ window.AdsStudio = (function () {
             product: c.product,
             desc: c.desc + ' copy',
             cboBudget: c.cboBudget,
+            pageId: c.pageId,
             name: ''
           });
         }
@@ -863,9 +929,31 @@ window.AdsStudio = (function () {
     if (note) note.style.display = anyCbo ? 'flex' : 'none';
   }
 
+  function populateCampPageSelect() {
+    const sel = document.getElementById('campPageSelect');
+    if (!sel) return;
+    const pages = S.getPages();
+    if (!pages || pages.length === 0) {
+      sel.innerHTML = '<option value="">(Không có Fanpage nào)</option>';
+      return;
+    }
+    let html = '';
+    pages.forEach(p => {
+      html += `<option value="${p.id}">${S.escapeHtml(p.name)}</option>`;
+    });
+    sel.innerHTML = html;
+
+    const matched = autoMatchPage(studioState.campProduct);
+    sel.value = matched || pages[0].id;
+    studioState.campPageId = sel.value;
+  }
+
   function renderStructurePreview() {
     const previewEl = document.getElementById('studioStructurePreview');
     if (!previewEl) return;
+
+    const pages = S.getPages();
+    const getPageName = (id) => pages.find(p => p.id === id)?.name || '';
 
     let lines = [];
     let totalCamps = 0;
@@ -875,7 +963,9 @@ window.AdsStudio = (function () {
       totalCamps = studioState.campaignCards.length;
       studioState.campaignCards.forEach((camp, cIdx) => {
         const cboStr = Number(camp.cboBudget) > 0 ? ` (CBO ${S.formatNum(camp.cboBudget)}đ)` : ' (ABO)';
-        lines.push(`${camp.name || 'Chiến dịch ' + (cIdx + 1)}${cboStr}`);
+        const pageName = getPageName(camp.pageId);
+        const pageTag = pageName ? ` [Page: ${pageName}]` : '';
+        lines.push(`${camp.name || 'Chiến dịch ' + (cIdx + 1)}${pageTag}${cboStr}`);
 
         let attachedAdsets = [];
         if (studioState.adsetMode === 'multi') {
@@ -892,7 +982,19 @@ window.AdsStudio = (function () {
         attachedAdsets.forEach((as, aIdx) => {
           const isLast = aIdx === attachedAdsets.length - 1;
           const prefix = isLast ? '  └─ ' : '  ├─ ';
-          lines.push(`${prefix}${as.name}`);
+          let asPageNote = '';
+          if (studioState.adsetMode === 'new') {
+            if (studioState.newAdsetPageId === '__by_campaign__' || !studioState.newAdsetPageId) {
+              asPageNote = pageName ? ` ➔ Page: ${pageName}` : ' ➔ Page: [Theo Chiến dịch]';
+            } else {
+              const explicitPage = getPageName(studioState.newAdsetPageId);
+              asPageNote = explicitPage ? ` ➔ Page: ${explicitPage}` : '';
+            }
+          } else if (studioState.adsetMode === 'multi') {
+            const explicitPage = getPageName(as.pageId);
+            asPageNote = explicitPage ? ` ➔ Page: ${explicitPage}` : '';
+          }
+          lines.push(`${prefix}${as.name}${asPageNote}`);
         });
 
         if (attachedAdsets.length === 0) {
@@ -903,7 +1005,9 @@ window.AdsStudio = (function () {
       totalCamps = 1;
       const cName = document.getElementById('campFullNamePreview')?.value || 'Chiến dịch mới';
       const cboStr = Number(studioState.campCboBudget) > 0 ? ` (CBO ${S.formatNum(studioState.campCboBudget)}đ)` : ' (ABO)';
-      lines.push(`${cName}${cboStr}`);
+      const pageName = getPageName(studioState.campPageId || autoMatchPage(studioState.campProduct));
+      const pageTag = pageName ? ` [Page: ${pageName}]` : '';
+      lines.push(`${cName}${pageTag}${cboStr}`);
 
       let attachedAdsets = [];
       if (studioState.adsetMode === 'multi') {
@@ -914,7 +1018,16 @@ window.AdsStudio = (function () {
       totalAdsets = attachedAdsets.length;
       attachedAdsets.forEach((as, aIdx) => {
         const isLast = aIdx === attachedAdsets.length - 1;
-        lines.push(`${isLast ? '  └─ ' : '  ├─ '}${as.name}`);
+        const prefix = isLast ? '  └─ ' : '  ├─ ';
+        let asPageNote = '';
+        if (studioState.adsetMode === 'new') {
+          const explicitPage = getPageName(studioState.newAdsetPageId || studioState.campPageId);
+          asPageNote = explicitPage ? ` ➔ Page: ${explicitPage}` : '';
+        } else if (studioState.adsetMode === 'multi') {
+          const explicitPage = getPageName(as.pageId);
+          asPageNote = explicitPage ? ` ➔ Page: ${explicitPage}` : '';
+        }
+        lines.push(`${prefix}${as.name}${asPageNote}`);
       });
     } else {
       totalCamps = 1;
@@ -924,12 +1037,14 @@ window.AdsStudio = (function () {
         lines.push(`  └─ ${totalAdsets} nhóm đã chọn trong chiến dịch`);
       } else if (studioState.adsetMode === 'new') {
         totalAdsets = 1;
-        lines.push(`  └─ [Tạo mới] ${studioState.newAdsetName}`);
+        const explicitPage = getPageName(studioState.newAdsetPageId);
+        lines.push(`  └─ [Tạo mới] ${studioState.newAdsetName}${explicitPage ? ' ➔ Page: ' + explicitPage : ''}`);
       } else {
         totalAdsets = studioState.adsetCards.length;
         studioState.adsetCards.forEach((as, aIdx) => {
           const isLast = aIdx === studioState.adsetCards.length - 1;
-          lines.push(`${isLast ? '  └─ ' : '  ├─ '}[Tạo mới] ${as.name}`);
+          const explicitPage = getPageName(as.pageId);
+          lines.push(`${isLast ? '  └─ ' : '  ├─ '}[Tạo mới] ${as.name}${explicitPage ? ' ➔ Page: ' + explicitPage : ''}`);
         });
       }
     }
@@ -950,11 +1065,57 @@ window.AdsStudio = (function () {
     previewEl.textContent = lines.join('\n');
   }
 
+  function renderCampPageMappingList() {
+    const list = document.getElementById('campPageMappingList');
+    if (!list) return;
+
+    const pages = S.getPages();
+    if (studioState.campaignCards.length === 0) {
+      list.innerHTML = '<div class="cp-empty-state" style="padding:var(--space-2);">Chưa có chiến dịch nào ở Bước 1.</div>';
+      return;
+    }
+
+    list.innerHTML = studioState.campaignCards.map((c, idx) => {
+      const pageOptions = pages.map(p => `
+        <option value="${p.id}" ${c.pageId === p.id ? 'selected' : ''}>${S.escapeHtml(p.name)}</option>
+      `).join('');
+
+      return `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:var(--bg-input);border-radius:var(--radius-sm);border:1px solid var(--border-subtle);gap:12px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:8px;min-width:200px;">
+            <span class="badge" style="background:var(--primary);color:#fff;font-size:0.7rem;">CĐ #${idx + 1}</span>
+            <span style="font-weight:600;font-size:0.8rem;color:var(--text-primary);">${S.escapeHtml(c.name)}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <label style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">Fanpage đích:</label>
+            <select class="select-filter camp-page-item-select" data-card-id="${c.id}" style="font-size:0.8rem;padding:4px 8px;min-width:240px;">
+              ${pageOptions}
+            </select>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    list.querySelectorAll('.camp-page-item-select').forEach(sel => {
+      sel.addEventListener('change', (e) => {
+        const id = e.target.dataset.cardId;
+        const c = studioState.campaignCards.find(x => x.id === id);
+        if (c) {
+          c.pageId = e.target.value;
+          const cardSel = document.querySelector(`.sc-page-select[data-card-id="${id}"]`);
+          if (cardSel) cardSel.value = e.target.value;
+          renderStructurePreview();
+        }
+      });
+    });
+  }
+
   // ------------------------------------------------------------------
   // LOAD DATA TỪ META GRAPH API
   // ------------------------------------------------------------------
   async function initStudio() {
     initStudioEvents();
+    populateCampPageSelect();
     goToStudioStep(1);
     await loadStudioAccounts();
     updateSingleCampNamePreview();
@@ -1135,9 +1296,22 @@ window.AdsStudio = (function () {
             alert('Vui lòng nhập tên Nhóm quảng cáo mới.');
             return;
           }
-          if (!pageSelect || !pageSelect.value) {
-            alert('Vui lòng chọn Fanpage nhận tin nhắn.');
-            return;
+          if (studioState.campMode === 'multi') {
+            if (pageSelect?.value === '__by_campaign__') {
+              const missing = studioState.campaignCards.some(c => !c.pageId);
+              if (missing) {
+                alert('Vui lòng chọn Fanpage nhận tin nhắn cho tất cả các chiến dịch.');
+                return;
+              }
+            } else if (!pageSelect || !pageSelect.value) {
+              alert('Vui lòng chọn Fanpage nhận tin nhắn.');
+              return;
+            }
+          } else {
+            if (!pageSelect || !pageSelect.value) {
+              alert('Vui lòng chọn Fanpage nhận tin nhắn.');
+              return;
+            }
           }
           studioState.newAdsetName = nameInput.value.trim();
           studioState.newAdsetPageId = pageSelect.value;
@@ -1194,18 +1368,51 @@ window.AdsStudio = (function () {
   }
 
   async function onEnterStep2() {
-    // Populate fanpage select
     const pageSel = document.getElementById('newAdsetPageSelect');
+    const hintCampPageMode = document.getElementById('hintCampPageMode');
+    const boxCampPageMapping = document.getElementById('boxCampPageMapping');
     const pages = S.getPages();
-    if (pageSel && pageSel.options.length <= 1) {
-      let html = '<option value="">-- Chọn Fanpage nhận tin nhắn --</option>';
-      pages.forEach(p => {
-        html += `<option value="${p.id}">${S.escapeHtml(p.name)}</option>`;
-      });
-      pageSel.innerHTML = html;
-      if (pages.length > 0) {
-        pageSel.value = pages[0].id;
-        studioState.newAdsetPageId = pages[0].id;
+
+    if (pageSel) {
+      let html = '';
+      if (studioState.campMode === 'multi') {
+        html += '<option value="__by_campaign__">⚡ Theo Fanpage của từng Chiến dịch (khuyên dùng)</option>';
+        pages.forEach(p => {
+          html += `<option value="${p.id}">Dùng chung tất cả CĐ: ${S.escapeHtml(p.name)}</option>`;
+        });
+        pageSel.innerHTML = html;
+
+        if (!studioState.newAdsetPageId || studioState.newAdsetPageId === '__by_campaign__') {
+          pageSel.value = '__by_campaign__';
+          studioState.newAdsetPageId = '__by_campaign__';
+        } else {
+          pageSel.value = studioState.newAdsetPageId;
+        }
+
+        const isByCamp = pageSel.value === '__by_campaign__';
+        if (hintCampPageMode) hintCampPageMode.style.display = isByCamp ? 'inline-block' : 'none';
+        if (boxCampPageMapping) {
+          boxCampPageMapping.style.display = isByCamp ? 'block' : 'none';
+          if (isByCamp) renderCampPageMappingList();
+        }
+      } else {
+        html = '<option value="">-- Chọn Fanpage nhận tin nhắn --</option>';
+        pages.forEach(p => {
+          html += `<option value="${p.id}">${S.escapeHtml(p.name)}</option>`;
+        });
+        pageSel.innerHTML = html;
+
+        if (hintCampPageMode) hintCampPageMode.style.display = 'none';
+        if (boxCampPageMapping) boxCampPageMapping.style.display = 'none';
+
+        const preferredPageId = (studioState.campMode === 'new' && studioState.campPageId)
+          ? studioState.campPageId
+          : (studioState.newAdsetPageId || pages[0]?.id || '');
+
+        if (preferredPageId) {
+          pageSel.value = preferredPageId;
+          studioState.newAdsetPageId = preferredPageId;
+        }
       }
     }
 
@@ -1404,7 +1611,8 @@ window.AdsStudio = (function () {
           key: c.key || `camp_${idx + 1}`,
           name: c.name || makeCampaignName(c.prefix, c.product, c.desc),
           objective: 'OUTCOME_ENGAGEMENT',
-          dailyBudget: Number(c.cboBudget) > 0 ? Number(c.cboBudget) : undefined
+          dailyBudget: Number(c.cboBudget) > 0 ? Number(c.cboBudget) : undefined,
+          pageId: c.pageId || autoMatchPage(c.product)
         });
       });
     } else if (studioState.campMode === 'new') {
@@ -1413,7 +1621,8 @@ window.AdsStudio = (function () {
         key: 'camp_1',
         name: cName,
         objective: 'OUTCOME_ENGAGEMENT',
-        dailyBudget: Number(studioState.campCboBudget) > 0 ? Number(studioState.campCboBudget) : undefined
+        dailyBudget: Number(studioState.campCboBudget) > 0 ? Number(studioState.campCboBudget) : undefined,
+        pageId: studioState.campPageId || autoMatchPage(studioState.campProduct)
       });
     } else {
       const curCamp = studioState.existingCampaigns.find(c => c.id === studioState.existingCampaignId);
@@ -1460,10 +1669,15 @@ window.AdsStudio = (function () {
         ? `existing:${studioState.existingCampaignId}`
         : 'all';
 
+      let effectivePageId = studioState.newAdsetPageId || defaultPageId;
+      if (studioState.campMode === 'multi' && (studioState.newAdsetPageId === '__by_campaign__' || !studioState.newAdsetPageId)) {
+        effectivePageId = '__by_campaign__';
+      }
+
       adsets.push({
         key: 'as_1',
         name: studioState.newAdsetName || 'Nhóm QC mới',
-        pageId: studioState.newAdsetPageId || defaultPageId,
+        pageId: effectivePageId,
         dailyBudget: Number(studioState.newAdsetBudget) || 100000,
         targeting: makeTargeting(
           studioState.targetLocation,

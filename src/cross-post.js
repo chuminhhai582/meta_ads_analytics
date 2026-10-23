@@ -1133,7 +1133,16 @@ export function resolveAttachments({ campaigns = [], adsets = [], existingCampai
           `Bỏ ngân sách ở nhóm, hoặc bỏ CBO ở chiến dịch.`
         );
       }
-      out.push({ adsetSpec: a, campaignRef: ref, useCampaignBudget: ref.hasCbo });
+      const camp = ref.kind === 'new' ? newByKey.get(ref.key) : null;
+      let effectivePageId = a.pageId;
+      if ((!effectivePageId || effectivePageId === '__by_campaign__') && camp?.pageId) {
+        effectivePageId = camp.pageId;
+      }
+      out.push({
+        adsetSpec: effectivePageId ? { ...a, pageId: effectivePageId } : a,
+        campaignRef: ref,
+        useCampaignBudget: ref.hasCbo
+      });
     }
   }
 

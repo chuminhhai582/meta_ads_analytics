@@ -165,6 +165,34 @@ test('resolveAttachments: quá 3 nhóm mới trên 1 chiến dịch thì throw',
   }), /nhóm\/chiến dịch/);
 });
 
+test('resolveAttachments: nhóm có pageId __by_campaign__ tự kế thừa pageId của từng chiến dịch', () => {
+  const r = resolveAttachments({
+    campaigns: [
+      { key: 'camp_ucmas', name: 'haicm/ucmas/mess/kg', pageId: 'page_ucmas_123' },
+      { key: 'camp_uckid', name: 'haicm/uckid/mess/kg', pageId: 'page_uckid_456' }
+    ],
+    adsets: [
+      { key: 'as_1', name: 'Nhóm QC 1', attachTo: 'all', pageId: '__by_campaign__' }
+    ]
+  });
+  assert.equal(r.length, 2);
+  assert.equal(r[0].adsetSpec.pageId, 'page_ucmas_123');
+  assert.equal(r[1].adsetSpec.pageId, 'page_uckid_456');
+});
+
+test('resolveAttachments: nhóm có pageId riêng thì không bị ghi đè bởi chiến dịch', () => {
+  const r = resolveAttachments({
+    campaigns: [
+      { key: 'camp_1', name: 'haicm/ucmas/mess/kg', pageId: 'page_camp_default' }
+    ],
+    adsets: [
+      { key: 'as_1', name: 'Nhóm QC 1', attachTo: 'all', pageId: 'page_adset_custom' }
+    ]
+  });
+  assert.equal(r.length, 1);
+  assert.equal(r[0].adsetSpec.pageId, 'page_adset_custom');
+});
+
 // ---------------------------------------------------------------------------
 // expandPairs / renderAdName
 // ---------------------------------------------------------------------------
