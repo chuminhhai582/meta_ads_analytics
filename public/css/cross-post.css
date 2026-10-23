@@ -749,3 +749,261 @@
   box-shadow: var(--shadow-card);
 }
 
+/* ============================================================
+   TAB 3 — ĐĂNG ADS HÀNG LOẠT (thêm 23/10/2026)
+   ============================================================ */
+
+/* Utility classes */
+.cp-w-full { width: 100%; }
+.cp-flex-1 { flex: 1; }
+.cp-text-danger { color: var(--danger-text); }
+.cp-label-hint { font-size: 0.75rem; color: var(--text-muted); font-weight: normal; margin-left: var(--space-1); }
+.studio-nav-right { margin-left: auto; display: flex; gap: var(--space-3); }
+.btn-success-tone { background: var(--success) !important; border-color: var(--success) !important; }
+
+/* Filter row */
+.bulk-filter-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-end;
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+.bulk-filter-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.bulk-notice-draft {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  font-size: 0.82rem;
+  color: var(--warning-text);
+  line-height: 1.5;
+  margin-bottom: var(--space-4);
+}
+.bulk-notice-draft i {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.bulk-count-line {
+  margin-top: var(--space-3);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+/* Tree component */
+.bulk-tree {
+  max-height: 460px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+}
+
+.bulk-tree-group {
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bulk-tree-group:last-child {
+  border-bottom: none;
+}
+
+.bulk-tree-node {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  user-select: none;
+}
+.bulk-tree-node--campaign {
+  background: var(--bg-card);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.bulk-tree-node--campaign:hover {
+  background: var(--bg-card-solid);
+}
+.bulk-tree-node--adset {
+  padding-left: var(--space-6);
+  font-size: 0.875rem;
+  background: transparent;
+  color: var(--text-secondary);
+  border-top: 1px solid rgba(255, 255, 255, 0.03);
+}
+.bulk-tree-node--adset:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.bulk-campaign-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bulk-adset-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bulk-tree-children {
+  background: rgba(0, 0, 0, 0.15);
+}
+.bulk-tree-warn {
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-6);
+  font-size: 0.8rem;
+  color: var(--warning-text);
+  background: rgba(245, 158, 11, 0.05);
+}
+.bulk-tree-loading {
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-6);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* Chips */
+.bulk-chip {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.bulk-chip--status {
+  text-transform: uppercase;
+}
+.bulk-chip--draft {
+  color: var(--warning);
+  border-color: var(--warning);
+  background: rgba(245, 158, 11, 0.12);
+  font-weight: 600;
+}
+.bulk-chip--cbo {
+  color: var(--cyan-text);
+  border-color: var(--cyan-text);
+}
+.bulk-chip--warn {
+  color: var(--danger-text);
+  border-color: var(--danger-text);
+}
+
+/* Entity Cards & Droparea */
+.cp-entity-card {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+.cp-entity-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-3);
+}
+.cp-entity-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.cp-entity-card-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+.cp-char-counter {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-align: right;
+  margin-top: 2px;
+}
+.cp-char-counter--over {
+  color: var(--warning-text);
+  font-weight: 600;
+}
+
+.cp-droparea {
+  border: 2px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  text-align: center;
+  cursor: pointer;
+  transition: var(--transition);
+  background: var(--bg-inset);
+}
+.cp-droparea:hover, .cp-droparea--hover {
+  border-color: var(--primary);
+  background: rgba(0, 128, 251, 0.08);
+}
+.cp-droparea-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+/* Matrix Table */
+.bulk-matrix-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  margin-top: var(--space-3);
+}
+.bulk-matrix-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.bulk-matrix-head th {
+  background: var(--bg-card);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  font-weight: 600;
+}
+.bulk-matrix-cell {
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+  color: var(--success-text);
+  transition: var(--transition);
+}
+.bulk-matrix-cell:hover {
+  background: var(--bg-hover);
+}
+.bulk-matrix-cell--off {
+  color: var(--text-muted);
+  opacity: 0.45;
+}
+
+/* Logs */
+.cp-log-row {
+  margin-bottom: 4px;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.cp-log-row--error { color: var(--danger-text); }
+.cp-log-row--warn { color: var(--warning-text); }
+.cp-log-row--success { color: var(--success-text); }
+.bulk-result-group {
+  margin-bottom: var(--space-4);
+}
+
+

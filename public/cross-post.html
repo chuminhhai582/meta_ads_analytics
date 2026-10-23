@@ -53,6 +53,10 @@
         <i data-lucide="copy"></i>
         <span>Nhân bản Quảng cáo (Ads)</span>
       </button>
+      <button id="tabBulkAdsBtn" class="cp-tab-btn" type="button">
+        <i data-lucide="layout-grid"></i>
+        <span>Đăng Ads hàng loạt (gồm CĐ nháp)</span>
+      </button>
     </nav>
 
     <!-- ========================================================= -->
@@ -625,6 +629,114 @@
         </div>
       </footer>
 
+    </section>
+
+    <!-- ========================================================= -->
+    <!-- SECTION 3: ĐĂNG ADS HÀNG LOẠT VÀO CĐ/NHÓM CÓ SẴN          -->
+    <!-- ========================================================= -->
+    <section id="bulkAdsSection" style="display:none;">
+
+      <nav class="studio-stepper" id="bulkStepper" aria-label="Các bước đăng ads hàng loạt">
+        <div class="studio-step-item active" data-bulk-step="1" id="bulkStepInd1">
+          <span class="step-badge">1</span><span>Chọn Chiến dịch &amp; Nhóm đích</span>
+        </div>
+        <div class="studio-step-divider"></div>
+        <div class="studio-step-item" data-bulk-step="2" id="bulkStepInd2">
+          <span class="step-badge">2</span><span>Soạn nội dung Quảng cáo</span>
+        </div>
+        <div class="studio-step-divider"></div>
+        <div class="studio-step-item" data-bulk-step="3" id="bulkStepInd3">
+          <span class="step-badge">3</span><span>Ma trận &amp; Kiểm tra</span>
+        </div>
+        <div class="studio-step-divider"></div>
+        <div class="studio-step-item" data-bulk-step="4" id="bulkStepInd4">
+          <span class="step-badge">4</span><span>Thực thi</span>
+        </div>
+      </nav>
+
+      <!-- ---------------- BƯỚC 1 ---------------- -->
+      <div id="bulkStep1" class="studio-step-container">
+        <div class="cp-card">
+          <div class="cp-card-header">
+            <h2 class="cp-card-title">
+              <span class="step-num">1</span>
+              <span>Chọn Tài khoản, Chiến dịch (gồm bản nháp) &amp; Nhóm đích</span>
+            </h2>
+            <span class="badge" id="bulkTargetBadge">0 nhóm đích</span>
+          </div>
+
+          <div class="cp-editor-box">
+            <div class="cp-form-group">
+              <label for="bulkAccountSelect" class="cp-form-label">
+                Tài khoản Quảng cáo <span class="cp-label-hint">(mỗi đợt chỉ 1 tài khoản)</span>
+              </label>
+              <select id="bulkAccountSelect" class="select-filter cp-w-full">
+                <option value="">-- Đang tải tài khoản quảng cáo... --</option>
+              </select>
+            </div>
+
+            <div class="bulk-filter-row">
+              <div class="cp-form-group cp-flex-1">
+                <label for="bulkCampaignSearch" class="cp-form-label">Tìm theo tên chiến dịch</label>
+                <input type="text" id="bulkCampaignSearch" class="cp-input" placeholder="VD: khaigiang, ucmas...">
+              </div>
+              <div class="cp-form-group">
+                <label for="bulkCampaignFilter" class="cp-form-label">Lọc trạng thái</label>
+                <select id="bulkCampaignFilter" class="select-filter">
+                  <option value="all">Tất cả</option>
+                  <option value="draft">Chỉ bản nháp</option>
+                  <option value="active">Đang chạy</option>
+                  <option value="paused">Tạm dừng</option>
+                </select>
+              </div>
+              <div class="bulk-filter-actions">
+                <button type="button" class="btn btn-secondary btn-sm" id="bulkReloadCampaignsBtn">
+                  <i data-lucide="refresh-cw"></i><span>Tải lại</span>
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm" id="bulkExpandAllBtn">Mở hết</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="bulkClearTargetsBtn">Bỏ chọn hết</button>
+              </div>
+            </div>
+
+            <div class="bulk-notice-draft" id="bulkDraftNotice">
+              <i data-lucide="info"></i>
+              <span>
+                Chỉ nạp được <strong>chiến dịch nháp đã tồn tại trên Meta</strong> (chưa có quảng cáo,
+                hoặc đang xử lý). Bản nháp còn nằm trong <strong>trình tạo của Ads Manager</strong> thì
+                Marketing API không đọc được — hãy Lưu/Xuất bản bản nháp đó trong Ads Manager trước.
+              </span>
+            </div>
+
+            <div id="bulkTargetTree" class="bulk-tree">
+              <div class="cp-empty-state">Hãy chọn Tài khoản quảng cáo ở trên.</div>
+            </div>
+
+            <div class="bulk-count-line">
+              Đã chọn <strong id="bulkSelectedTargetsCount">0</strong> nhóm
+              thuộc <strong id="bulkSelectedCampaignsCount">0</strong> chiến dịch
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- BƯỚC 2, 3, 4: xem §8, §9, §10 -->
+      <div id="bulkStep2" class="studio-step-container" style="display:none;"></div>
+      <div id="bulkStep3" class="studio-step-container" style="display:none;"></div>
+      <div id="bulkStep4" class="studio-step-container" style="display:none;"></div>
+
+      <footer class="studio-nav-bar">
+        <button type="button" class="btn btn-secondary" id="bulkBackBtn" style="display:none;">
+          <i data-lucide="arrow-left"></i><span>Quay lại</span>
+        </button>
+        <div class="studio-nav-right">
+          <button type="button" class="btn btn-primary" id="bulkNextBtn">
+            <span>Tiếp theo</span><i data-lucide="arrow-right"></i>
+          </button>
+          <button type="button" class="btn btn-primary btn-success-tone" id="bulkExecuteBtn" style="display:none;">
+            <i data-lucide="rocket"></i><span>Tiến hành tạo Quảng cáo (PAUSED)</span>
+          </button>
+        </div>
+      </footer>
     </section>
 
   </div>
