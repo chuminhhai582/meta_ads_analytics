@@ -250,6 +250,10 @@
                 <i data-lucide="plus-circle"></i>
                 <span>Tạo Chiến dịch mới</span>
               </button>
+              <button type="button" class="studio-switch-btn" id="btnModeMultiCamp">
+                <i data-lucide="layers-3"></i>
+                <span>Tạo nhiều Chiến dịch</span>
+              </button>
             </div>
           </div>
 
@@ -317,6 +321,25 @@
               </div>
             </div>
 
+            <!-- PHƯƠNG ÁN 1C: TẠO NHIỀU CHIẾN DỊCH (Tối đa 15) -->
+            <div id="boxMultiCamp" style="display:none;background:var(--bg-inset);padding:var(--space-4);border-radius:var(--radius-md);border:1px solid var(--border-subtle);margin-top:var(--space-3);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-3);">
+                <div style="font-size:0.9rem;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:6px;">
+                  <i data-lucide="layers-3" style="color:var(--primary);"></i>
+                  <span>Danh sách Chiến dịch mới (tối đa 15 CĐ)</span>
+                </div>
+                <div style="display:flex;gap:var(--space-2);">
+                  <button type="button" class="btn btn-secondary btn-sm" id="btnQuickGenCampaigns">
+                    <i data-lucide="sparkles"></i><span>Sinh nhanh 4 sản phẩm</span>
+                  </button>
+                  <button type="button" class="btn btn-primary btn-sm" id="btnAddCampaignCard">
+                    <i data-lucide="plus"></i><span>Thêm chiến dịch</span>
+                  </button>
+                </div>
+              </div>
+              <div id="studioCampaignCards" style="display:flex;flex-direction:column;gap:var(--space-3);"></div>
+            </div>
+
           </div>
         </div>
       </div>
@@ -339,6 +362,10 @@
               <button type="button" class="studio-switch-btn" id="btnModeNewAdset">
                 <i data-lucide="plus-circle"></i>
                 <span>Tạo Nhóm mới</span>
+              </button>
+              <button type="button" class="studio-switch-btn" id="btnModeMultiAdset">
+                <i data-lucide="layers-3"></i>
+                <span>Tạo nhiều Nhóm</span>
               </button>
             </div>
           </div>
@@ -440,6 +467,49 @@
 
             </div>
 
+            <!-- PHƯƠNG ÁN 2C: TẠO NHIỀU NHÓM QUẢNG CÁO (Tối đa 3 thẻ) -->
+            <div id="boxMultiAdset" style="display:none;background:var(--bg-inset);padding:var(--space-4);border-radius:var(--radius-md);border:1px solid var(--border-subtle);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-3);flex-wrap:wrap;gap:var(--space-2);">
+                <div>
+                  <div style="font-size:0.9rem;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:6px;">
+                    <i data-lucide="layers-3" style="color:var(--primary);"></i>
+                    <span>Danh sách Nhóm quảng cáo mới (tối đa 3 mẫu nhóm)</span>
+                  </div>
+                  <div style="font-size:0.78rem;color:var(--text-muted);margin-top:2px;">
+                    Mỗi mẫu nhóm sẽ được nhân bản vào các chiến dịch tương ứng (tối đa 3 nhóm / chiến dịch).
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:var(--space-2);">
+                  <div class="cp-form-group" style="margin-bottom:0;display:flex;align-items:center;gap:6px;">
+                    <label for="studioAdsetAttachMode" style="font-size:0.8rem;color:var(--text-secondary);white-space:nowrap;">Cách gán:</label>
+                    <select id="studioAdsetAttachMode" class="select-filter" style="font-size:0.8rem;padding:4px 8px;">
+                      <option value="all" selected>Tất cả chiến dịch đã chọn/tạo</option>
+                      <option value="each">Gán riêng theo từng chiến dịch</option>
+                    </select>
+                  </div>
+                  <button type="button" class="btn btn-primary btn-sm" id="btnAddAdsetCard">
+                    <i data-lucide="plus"></i><span>Thêm mẫu nhóm</span>
+                  </button>
+                </div>
+              </div>
+
+              <div id="studioBudgetLockNote" class="bulk-notice-draft" style="display:none;margin-bottom:var(--space-3);">
+                <i data-lucide="alert-triangle"></i>
+                <span>Chiến dịch đang dùng ngân sách CBO — ngân sách ở cấp nhóm bị tắt tự động theo quy tắc của Meta.</span>
+              </div>
+
+              <div id="studioAdsetCards" style="display:flex;flex-direction:column;gap:var(--space-3);"></div>
+
+              <!-- Sơ đồ cấu trúc cây xem trước -->
+              <div style="margin-top:var(--space-4);padding-top:var(--space-3);border-top:1px solid var(--border-subtle);">
+                <div style="font-size:0.85rem;font-weight:600;color:var(--text-secondary);margin-bottom:var(--space-2);display:flex;align-items:center;gap:6px;">
+                  <i data-lucide="git-fork"></i>
+                  <span>Sơ đồ cấu trúc dự kiến</span>
+                </div>
+                <pre id="studioStructurePreview" style="background:var(--bg-card-solid);padding:var(--space-3);border-radius:var(--radius-sm);border:1px solid var(--border-subtle);font-family:monospace;font-size:0.8rem;color:var(--text-primary);max-height:200px;overflow-y:auto;white-space:pre-wrap;"></pre>
+              </div>
+            </div>
+
           </div>
         </div>
       </div>
@@ -457,79 +527,8 @@
             <span class="badge" id="studioCreativeCountBadge">0 nội dung sẵn sàng</span>
           </div>
 
-          <!-- Tab Bar chọn phương thức nội dung -->
-          <div class="creative-tab-bar">
-            <button type="button" class="creative-tab-item active" id="tabContentFromPosts">
-              <i data-lucide="file-text"></i>
-              <span>Cách 1: Chọn nhiều bài viết Fanpage</span>
-            </button>
-            <button type="button" class="creative-tab-item" id="tabContentCustom">
-              <i data-lucide="edit-3"></i>
-              <span>Cách 2: Nhập danh sách nội dung (Ảnh/Caption/Video)</span>
-            </button>
-            <button type="button" class="creative-tab-item" id="tabContentCloneAds">
-              <i data-lucide="copy"></i>
-              <span>Cách 3: Tích chọn nhiều Ads mẫu từ BM</span>
-            </button>
-          </div>
-
-          <!-- NỘI DUNG 3A: CHỌN NHIỀU BÀI TỪ FANPAGE -->
-          <div id="creativeSectionPosts">
-            <div style="display:flex;gap:var(--space-3);align-items:flex-end;margin-bottom:var(--space-3);">
-              <div class="cp-form-group" style="flex:1;">
-                <label for="sourceContentPageSelect" class="cp-form-label">Chọn Fanpage lấy bài viết</label>
-                <select id="sourceContentPageSelect" class="select-filter" style="width:100%;">
-                  <option value="">-- Đang tải Fanpage... --</option>
-                </select>
-              </div>
-              <div style="display:flex;gap:8px;">
-                <button type="button" class="btn btn-secondary btn-sm" id="btnSelectAllPosts">Chọn tất cả</button>
-                <button type="button" class="btn btn-secondary btn-sm" id="btnDeselectAllPosts">Bỏ chọn</button>
-              </div>
-            </div>
-
-            <div id="studioPostsLoading" class="cp-empty-state" style="display:none;">
-              <span class="cp-spinner"></span>
-              <p style="margin-top:8px;">Đang tải bài viết từ Fanpage...</p>
-            </div>
-
-            <div id="studioPostsGrid" class="cp-post-list" style="max-height:360px;">
-              <div class="cp-empty-state">Vui lòng chọn Fanpage để hiển thị danh sách bài đăng.</div>
-            </div>
-          </div>
-
-          <!-- NỘI DUNG 3B: NHẬP DANH SÁCH NỘI DUNG TÙY CHỈNH -->
-          <div id="creativeSectionCustom" style="display:none;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-3);">
-              <p style="font-size:0.875rem;color:var(--text-secondary);margin:0;">
-                Mỗi thẻ bên dưới tương ứng với <strong>1 quảng cáo độc lập</strong> sẽ được tạo ra:
-              </p>
-              <button type="button" class="btn btn-secondary btn-sm" id="btnAddCustomCard">
-                <i data-lucide="plus"></i>
-                <span>Thêm nội dung quảng cáo</span>
-              </button>
-            </div>
-
-            <div id="customCardsContainer">
-              <!-- Render cards dynamically via JS -->
-            </div>
-          </div>
-
-          <!-- NỘI DUNG 3C: TÍCH CHỌN TỪ CÁC ADS MẪU ĐÃ CÓ -->
-          <div id="creativeSectionCloneAds" style="display:none;">
-            <div style="display:flex;gap:var(--space-3);margin-bottom:var(--space-3);">
-              <div class="cp-form-group" style="flex:1;">
-                <label for="cloneAdSourceAdsetSelect" class="cp-form-label">Chọn Nhóm QC mẫu để lấy Ads</label>
-                <select id="cloneAdSourceAdsetSelect" class="select-filter" style="width:100%;">
-                  <option value="">-- Chọn nhóm quảng cáo mẫu --</option>
-                </select>
-              </div>
-            </div>
-
-            <div id="cloneAdsList" class="cp-post-list" style="max-height:360px;">
-              <div class="cp-empty-state">Chọn Nhóm quảng cáo mẫu để hiển thị danh sách ads cần nhân bản.</div>
-            </div>
-          </div>
+          <!-- Bộ soạn nội dung dùng chung CPShared.ContentEditor -->
+          <div id="studioContentContainer"></div>
 
           <!-- BẢNG XEM TRƯỚC MA TRẬN QUẢNG CÁO SẼ TẠO -->
           <div style="margin-top:var(--space-5);padding-top:var(--space-4);border-top:1px solid var(--border-subtle);">
@@ -590,7 +589,7 @@
           <div style="background:rgba(245, 158, 11, 0.1);border:1px solid rgba(245, 158, 11, 0.3);border-radius:var(--radius-sm);padding:var(--space-3);margin-bottom:var(--space-4);display:flex;align-items:center;gap:12px;">
             <i data-lucide="shield-alert" style="color:var(--warning);width:24px;height:24px;flex-shrink:0;"></i>
             <div style="font-size:0.85rem;color:var(--text-secondary);line-height:1.4;">
-              <strong style="color:var(--warning);">Quy tắc an toàn tuyệt đối:</strong> Toàn bộ Chiến dịch, Nhóm và Quảng cáo tạo mới được đặt ở trạng thái <strong>PAUSED (Tạm dừng)</strong>. Quá trình tạo có giãn cách 1.5s - 2s giữa các lệnh gọi Meta API để bảo vệ tài khoản khỏi checkpoint / rate-limit.
+              <strong style="color:var(--warning);">Quy tắc an toàn tuyệt đối:</strong> Toàn bộ Chiến dịch, Nhóm và Quảng cáo tạo mới được đặt ở trạng thái <strong>PAUSED (Tạm dừng)</strong>. Quá trình tạo thực thi theo hàng đợi công việc bất đồng bộ với giãn cách chống rate-limit.
             </div>
           </div>
 
@@ -603,8 +602,38 @@
             <div class="cp-progress-bar">
               <div id="studioProgressBarFill" class="cp-progress-fill"></div>
             </div>
+            <div id="studioJobIdText" style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;margin-bottom:8px;"></div>
             <div id="studioExecutionLog" style="max-height:240px;overflow-y:auto;background:var(--bg-inset);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:var(--space-3);font-family:monospace;font-size:0.8rem;line-height:1.6;">
               <!-- Execution log rows -->
+            </div>
+
+            <!-- Vùng kết quả bảng và tải CSV -->
+            <div id="studioResultArea" style="display:none;margin-top:var(--space-4);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-2);">
+                <h4 style="font-size:0.9rem;color:var(--text-primary);margin:0;">Kết quả chi tiết đợt tạo</h4>
+                <div style="display:flex;gap:var(--space-2);">
+                  <button type="button" class="btn btn-secondary btn-sm" id="studioRetryFailedBtn" style="display:none;">
+                    <i data-lucide="refresh-cw"></i><span>Thử lại phần lỗi</span>
+                  </button>
+                  <a class="btn btn-secondary btn-sm" id="studioDownloadCsvBtn" href="#" target="_blank" download>
+                    <i data-lucide="download"></i><span>Tải báo cáo CSV</span>
+                  </a>
+                </div>
+              </div>
+              <div style="overflow-x:auto;max-height:300px;border:1px solid var(--border-subtle);border-radius:var(--radius-sm);">
+                <table class="report-table" id="studioResultTable" style="width:100%;font-size:0.8rem;">
+                  <thead>
+                    <tr>
+                      <th>Loại</th>
+                      <th>Tên đối tượng</th>
+                      <th>ID Meta</th>
+                      <th>Trạng thái</th>
+                      <th>Chi tiết / Lỗi</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
             </div>
           </div>
 
